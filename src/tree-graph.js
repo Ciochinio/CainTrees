@@ -30,13 +30,14 @@ function clip(text, max) {
  * One post-order pass: leaves take the next free row, parents centre on the
  * span of their children. Enough for the shallow, wide trees we produce.
  */
-function layout(tree) {
+function layout(tree, rootId) {
   const pos = new Map();
+  const baseDepth = tree.nodes.get(rootId).depth;
   let cursor = 0;
 
   const place = (id) => {
     const node = tree.nodes.get(id);
-    const x = node.depth * (NODE_W + X_GAP);
+    const x = (node.depth - baseDepth) * (NODE_W + X_GAP);
     const kids = node.childIds.filter((childId) => tree.nodes.has(childId));
     if (!kids.length) {
       const y = cursor++ * ROW;
@@ -49,7 +50,7 @@ function layout(tree) {
     return y;
   };
 
-  place(tree.rootId);
+  place(rootId);
 
   let maxX = 0;
   let maxY = 0;
@@ -75,11 +76,12 @@ function edgePath(from, to, dashed) {
   });
 }
 
-function nodeGroup(node, at) {
+function nodeGroup(node, at, onFocus) {
   const group = svg('g', {
     transform: `translate(${at.x} ${at.y})`,
     class: 'cursor-pointer',
   });
+  group.dataset.nodeId = node.id;
 
   let stroke = DEPTH_STROKE[Math.min(node.depth, DEPTH_STROKE.length - 1)];
   if (node.unavailable) stroke = '#7f1d1d';
@@ -118,28 +120,39 @@ function nodeGroup(node, at) {
   sub.textContent = bits.join('  ·  ');
   group.append(sub);
 
-  const full = svg('title');
-  full.textContent = node.video ? `${node.video.title}\n${node.video.channelTitle}` : label;
-  group.append(full);
-
   const href = node.isChannel
     ? `https://www.youtube.com/channel/${node.channel.id}`
     : watchUrl(node.id);
-  group.addEventListener('click', () => window.open(href, '_blank', 'noopener'));
+  const canFocus = node.childIds.length > 0;
+
+  const full = svg('title');
+  full.textContent = `${node.video ? `${node.video.title}\n${node.video.channelTitle}` : label}\n\n${
+    canFocus ? 'Click to focus · ⌘/Ctrl-click to open on YouTube' : 'Click to open on YouTube'
+  }`;
+  group.append(full);
+
+  group.addEventListener('click', (event) => {
+    // Drilling in is the common action on a node that has children; opening the
+    // video is what you want on a leaf.
+    if (canFocus && !event.metaKey && !event.ctrlKey) onFocus(node.id);
+    else window.open(href, '_blank', 'noopener');
+  });
   return group;
 }
 
 /**
  * Draws the tree into `container` and returns a controller with `fit()`.
  */
-export function renderGraph(container, tree) {
+export function renderGraph(container, tree, options = {}) {
+  const { rootId = tree.rootId, showCrossLinks = false, onFocus = () => {} } = options;
+
   container.replaceChildren();
   // Any pending re-fit belongs to the graph we just discarded.
   container.__fitObserver?.disconnect();
   container.__fitObserver = null;
-  if (!tree.nodes.has(tree.rootId)) return { fit() {}, zoomBy() {} };
+  if (!tree.nodes.has(rootId)) return { fit() {}, zoomBy() {}, highlight() {} };
 
-  const { pos, width, height } = layout(tree);
+  const { pos, width, height } = layout(tree, rootId);
 
   const root = svg('svg', { width: '100%', height: '100%', class: 'block touch-none select-none' });
   const camera = svg('g');
@@ -155,11 +168,13 @@ export function renderGraph(container, tree) {
       const to = pos.get(childId);
       if (to) edges.append(edgePath(from, to, false));
     }
-    for (const targetId of node.crossLinks) {
-      const to = pos.get(targetId);
-      if (to) edges.append(edgePath(from, to, true));
+    if (showCrossLinks) {
+      for (const targetId of node.crossLinks) {
+        const to = pos.get(targetId);
+        if (to) edges.append(edgePath(from, to, true));
+      }
     }
-    nodes.append(nodeGroup(node, from));
+    nodes.append(nodeGroup(node, from, onFocus));
   }
 
   container.append(root);
@@ -252,6 +267,38 @@ export function renderGraph(container, tree) {
   root.addEventListener('pointerup', endDrag);
   root.addEventListener('pointercancel', endDrag);
 
+  /**
+   * Dim everything that doesn't match, and centre the first hit. Returns the
+   * number of matches so the caller can report "no results".
+   */
+  const highlight = (query) => {
+    const needle = String(query || '').trim().toLowerCase();
+    const groups = [...nodes.children];
+    if (!needle) {
+      for (const group of groups) group.setAttribute('opacity', 1);
+      return 0;
+    }
+    let first = null;
+    let count = 0;
+    for (const group of groups) {
+      const node = tree.nodes.get(group.dataset.nodeId);
+      const label = (node?.video?.title || node?.channel?.title || '').toLowerCase();
+      const hit = label.includes(needle);
+      group.setAttribute('opacity', hit ? 1 : 0.15);
+      if (hit) {
+        count++;
+        if (!first) first = pos.get(node.id);
+      }
+    }
+    if (first) {
+      const box = container.getBoundingClientRect();
+      tx = box.width / 2 - (first.x + NODE_W / 2) * scale;
+      ty = box.height / 2 - (first.y + NODE_H / 2) * scale;
+      apply();
+    }
+    return count;
+  };
+
   fit(true);
   if (!fitted) {
     // The pane was hidden or zero-sized; fit as soon as it gets a real box.
@@ -263,5 +310,5 @@ export function renderGraph(container, tree) {
     container.__fitObserver = observer;
   }
 
-  return { fit, zoomBy };
+  return { fit, zoomBy, highlight };
 }

@@ -53,6 +53,9 @@ function meta(node, tree) {
   }
   if (node.video?.channelTitle) row.append(el('span', 'truncate', node.video.channelTitle));
   if (node.childIds.length) row.append(el('span', '', `${node.childIds.length} linked`));
+  if (node.subtreeSize > 2 && node.depth === 1) {
+    row.append(el('span', 'text-slate-500', `${node.subtreeSize} in cluster`));
+  }
   if (node.notFollowed) row.append(el('span', 'text-slate-500', `+${node.notFollowed} not followed`));
   if (node.unavailable) {
     row.append(el('span', 'text-rose-400/80', 'private, deleted, or not found'));
@@ -168,6 +171,69 @@ export function renderList(container, tree) {
   const ul = el('ul', 'space-y-0.5');
   ul.append(renderNode(root, tree));
   container.append(ul);
+
+  const isolated = tree.isolatedIds || [];
+  if (!isolated.length) return;
+
+  // Kept reachable, but out of the way: these link to nothing and nothing links
+  // to them, so they'd otherwise be most of the rows on screen.
+  const section = el('div', 'mt-4 border-t border-slate-800 pt-3');
+  const toggle = el(
+    'button',
+    'flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-xs font-medium text-slate-400 hover:bg-slate-800/60',
+  );
+  const caret = el('span', 'text-slate-500', '▸');
+  toggle.append(caret, el('span', '', `Unlinked videos (${isolated.length})`));
+
+  const list = el('ul', 'mt-1 hidden space-y-0.5');
+  for (const id of isolated) {
+    const node = tree.nodes.get(id);
+    if (node) list.append(renderNode(node, tree));
+  }
+  toggle.addEventListener('click', () => {
+    const hidden = list.classList.toggle('hidden');
+    caret.textContent = hidden ? '▸' : '▾';
+  });
+
+  section.append(toggle, list);
+  container.append(section);
+}
+
+/**
+ * Show only rows matching `query`, keeping the ancestors of every hit so the
+ * path stays readable. Returns the number of matches.
+ */
+export function filterList(container, tree, query) {
+  const needle = String(query || '').trim().toLowerCase();
+  const rows = container.querySelectorAll('[id^="node-"]');
+  let count = 0;
+
+  for (const row of rows) {
+    const li = row.parentElement;
+    if (!needle) {
+      li.classList.remove('hidden');
+      row.classList.remove('ring-1', 'ring-sky-500/60');
+      continue;
+    }
+    const node = tree.nodes.get(row.id.slice('node-'.length));
+    const label = (node?.video?.title || node?.channel?.title || '').toLowerCase();
+    const hit = label.includes(needle);
+    if (hit) count++;
+    row.classList.toggle('ring-1', hit);
+    row.classList.toggle('ring-sky-500/60', hit);
+    li.classList.toggle('hidden', !hit);
+  }
+
+  if (needle) {
+    // Re-reveal the ancestors of each hit, plus the branch containers they sit in.
+    for (const row of rows) {
+      if (row.parentElement.classList.contains('hidden')) continue;
+      for (let el2 = row.parentElement; el2 && el2 !== container; el2 = el2.parentElement) {
+        el2.classList.remove('hidden');
+      }
+    }
+  }
+  return count;
 }
 
 export function setAllExpanded(container, expanded) {

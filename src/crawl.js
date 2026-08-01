@@ -97,7 +97,7 @@ export async function crawl({
   }
 
   onProgress({ depth: Math.min(depth, maxDepth), total: nodes.size, fetching: 0, done: true });
-  return { rootId, nodes, truncated, reason };
+  return { rootId, nodes, isolatedIds: [], truncated, reason };
 }
 
 const OFF_CHANNEL_CAP = 300;
@@ -254,9 +254,30 @@ export async function crawlChannel({
   const root = makeNode(rootId, 0, null);
   root.isChannel = true;
   root.channel = channel;
-  root.childIds = topLevel;
   nodes.set(rootId, root);
   for (const id of topLevel) nodes.get(id).parentId = rootId;
+
+  // Most uploads link to nothing and are linked by nothing. They carry no
+  // structure, so they'd only add empty rows to the graph — split them out and
+  // lead with the biggest clusters instead.
+  const isolatedIds = [];
+  const clusterRoots = [];
+  for (const id of topLevel) {
+    const node = nodes.get(id);
+    if (!node.childIds.length && !node.crossLinks.length) isolatedIds.push(id);
+    else clusterRoots.push(id);
+  }
+
+  const measure = (id) => {
+    const node = nodes.get(id);
+    node.subtreeSize = 1 + node.childIds.reduce((sum, childId) => sum + measure(childId), 0);
+    return node.subtreeSize;
+  };
+  for (const id of clusterRoots) measure(id);
+  clusterRoots.sort((a, b) => nodes.get(b).subtreeSize - nodes.get(a).subtreeSize);
+
+  root.childIds = clusterRoots;
+  root.subtreeSize = nodes.size;
 
   if (!complete) {
     truncated = true;
@@ -264,7 +285,7 @@ export async function crawlChannel({
   }
 
   onProgress({ phase: 'done', count: nodes.size - 1 });
-  return { rootId, nodes, channel, truncated, reason, mode: 'channel' };
+  return { rootId, nodes, channel, isolatedIds, truncated, reason, mode: 'channel' };
 }
 
 /** Ordered list of nodes as a depth-first walk of the tree. */

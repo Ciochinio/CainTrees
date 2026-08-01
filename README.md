@@ -58,6 +58,26 @@ day's quota.
 Videos are cached in `localStorage` for 7 days and the uploads list for 12 hours,
 so a repeat run of the same channel usually costs nothing at all.
 
+## Making 600 videos navigable
+
+Most of a channel's uploads link to nothing and are linked by nothing. Drawn all
+at once they're just empty rows, so the views separate them out:
+
+- **Unlinked videos** — no links in or out — are excluded from the graph and
+  collapse into one `Unlinked videos (N)` section at the bottom of the list.
+  On a 600-video fixture this took the graph from 603 nodes to 20.
+- **Clusters come first.** Top-level videos are ordered by how big their subtree
+  is, so the substantial link chains are at the top rather than in upload order.
+- **Cross-links are off by default.** They're the dashed edges, and at scale they
+  form a curtain of near-vertical lines across the whole canvas. The
+  **Cross-links** checkbox brings them back.
+- **Drill down.** Click any node with children in the graph to make it the root
+  and see just its subtree; breadcrumbs above walk back up. ⌘/Ctrl-click opens
+  the video on YouTube instead. Leaf nodes open YouTube on a plain click.
+- **Search** filters the list to matching titles (keeping their ancestors) and
+  dims non-matches in the graph, centring the first hit. The two views hold
+  different node sets, so the match count is reported per view.
+
 ## While it runs
 
 A channel run is almost entirely time spent waiting on the API — the uploads list

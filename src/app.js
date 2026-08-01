@@ -3,7 +3,7 @@
 import { ApiError, cacheSize, clearCache, resetStats, stats } from './api.js';
 import { crawl, crawlChannel } from './crawl.js';
 import { parseChannelInput, parseVideoInput } from './extract.js';
-import { renderList, setAllExpanded } from './tree-list.js';
+import { filterList, renderList, setAllExpanded } from './tree-list.js';
 import { renderGraph } from './tree-graph.js';
 
 const SETTINGS_KEY = 'ytree:settings';
@@ -49,6 +49,9 @@ const ui = {
   fit: $('fit'),
   zoomIn: $('zoom-in'),
   zoomOut: $('zoom-out'),
+  showCrossLinks: $('show-cross-links'),
+  search: $('search'),
+  crumbs: $('crumbs'),
 };
 
 const ACTIVE_TAB = ['bg-slate-700', 'text-slate-100'];
@@ -59,6 +62,7 @@ let graph = null;
 let graphStale = true;
 let view = 'list';
 let controller = null;
+let focusId = null; // graph drill-down: which node is acting as the root
 
 // ---------------------------------------------------------------- settings
 
@@ -148,6 +152,91 @@ function updateCacheInfo() {
   ui.cacheInfo.textContent = count ? `${count} videos cached` : 'Cache empty';
 }
 
+// ------------------------------------------------------- graph + crumbs
+
+function crumbLabel(node) {
+  if (node.isChannel) return node.channel.title;
+  const title = node.video?.title || node.id;
+  return title.length > 34 ? `${title.slice(0, 33)}…` : title;
+}
+
+function renderCrumbs(rootId) {
+  ui.crumbs.replaceChildren();
+  const showing = view === 'graph' && !!tree;
+  ui.crumbs.classList.toggle('hidden', !showing);
+  ui.crumbs.classList.toggle('flex', showing);
+  if (!showing) return;
+
+  const path = [];
+  for (let id = rootId; id; id = tree.nodes.get(id)?.parentId) path.unshift(id);
+
+  path.forEach((id, index) => {
+    const node = tree.nodes.get(id);
+    if (!node) return;
+    if (index) ui.crumbs.append(Object.assign(document.createElement('span'), {
+      className: 'text-slate-600',
+      textContent: '›',
+    }));
+
+    const last = index === path.length - 1;
+    const crumb = document.createElement(last ? 'span' : 'button');
+    crumb.textContent = crumbLabel(node);
+    crumb.className = last
+      ? 'font-medium text-slate-200'
+      : 'rounded px-1 text-slate-400 underline-offset-2 hover:text-sky-300 hover:underline';
+    if (!last) {
+      crumb.addEventListener('click', () => {
+        focusId = id === tree.rootId ? null : id;
+        drawGraph();
+      });
+    }
+    ui.crumbs.append(crumb);
+  });
+
+  if (path.length > 1) {
+    const hint = document.createElement('span');
+    hint.className = 'ml-2 text-slate-600';
+    hint.textContent = 'click a node to go deeper · ⌘/Ctrl-click opens YouTube';
+    ui.crumbs.append(hint);
+  }
+}
+
+/**
+ * The two views hold different node sets — the graph shows only the linked
+ * clusters — so a query legitimately matches a different number in each. Report
+ * whichever view is on screen.
+ */
+function applySearch() {
+  if (!tree) return;
+  const query = ui.search.value.trim();
+  const listMatches = filterList(ui.listPanel, tree, query);
+  const graphMatches = graph ? graph.highlight(query) : 0;
+
+  if (!query) {
+    setStatus(lastSummary);
+    return;
+  }
+  const matches = view === 'graph' ? graphMatches : listMatches;
+  const scope = view === 'graph' ? ' in the graph' : '';
+  setStatus(`${matches} match${matches === 1 ? '' : 'es'}${scope} for “${query}”`);
+}
+
+function drawGraph() {
+  if (!tree) return;
+  const rootId = focusId && tree.nodes.has(focusId) ? focusId : tree.rootId;
+  graph = renderGraph(ui.graphPanel, tree, {
+    rootId,
+    showCrossLinks: ui.showCrossLinks.checked,
+    onFocus: (id) => {
+      focusId = id;
+      drawGraph();
+    },
+  });
+  graphStale = false;
+  renderCrumbs(rootId);
+  if (ui.search.value) graph.highlight(ui.search.value);
+}
+
 function setView(next) {
   view = next;
   const listActive = next === 'list';
@@ -162,10 +251,9 @@ function setView(next) {
   ui.viewList.classList.add(...(listActive ? ACTIVE_TAB : IDLE_TAB));
   ui.viewGraph.classList.add(...(listActive ? IDLE_TAB : ACTIVE_TAB));
 
-  if (!listActive && tree && graphStale) {
-    graph = renderGraph(ui.graphPanel, tree);
-    graphStale = false;
-  }
+  if (!listActive && tree && graphStale) drawGraph();
+  else renderCrumbs(focusId && tree?.nodes.has(focusId) ? focusId : tree?.rootId);
+  if (ui.search.value.trim()) applySearch();
 }
 
 function setRunning(running) {
@@ -232,6 +320,8 @@ function stopProgress() {
   ui.sideStatus.classList.add('hidden');
 }
 
+let lastSummary = '';
+
 function summarise(result) {
   const count = result.mode === 'channel' ? result.nodes.size - 1 : result.nodes.size;
   const parts = [
@@ -239,8 +329,9 @@ function summarise(result) {
     `${stats.requests} request${stats.requests === 1 ? '' : 's'}`,
   ];
   if (result.mode === 'channel') {
-    const roots = result.nodes.get(result.rootId).childIds.length;
-    parts.push(`${roots} top-level`);
+    const clusters = result.nodes.get(result.rootId).childIds.length;
+    parts.push(`${clusters} cluster${clusters === 1 ? '' : 's'}`);
+    if (result.isolatedIds.length) parts.push(`${result.isolatedIds.length} unlinked`);
   }
   if (stats.cacheHits) parts.push(`${stats.cacheHits} cached`);
   if (result.truncated) parts.push(result.reason);
@@ -313,14 +404,14 @@ async function start() {
 
     tree = result;
     graphStale = true;
+    focusId = null;
+    ui.search.value = '';
     setProgress({ phase: 'Rendering…', detail: `${result.nodes.size} nodes` });
     ui.empty.classList.add('hidden');
     renderList(ui.listPanel, tree);
-    if (view === 'graph') {
-      graph = renderGraph(ui.graphPanel, tree);
-      graphStale = false;
-    }
-    setStatus(summarise(result));
+    if (view === 'graph') drawGraph();
+    lastSummary = summarise(result);
+    setStatus(lastSummary);
     if (result.nodes.get(mode.videoId)?.unavailable) {
       showError('The root video came back empty — it may be private, deleted, or region-locked.');
     }
@@ -368,6 +459,9 @@ ui.collapseAll.addEventListener('click', () => setAllExpanded(ui.listPanel, fals
 ui.fit.addEventListener('click', () => graph?.fit());
 ui.zoomIn.addEventListener('click', () => graph?.zoomBy(1.25));
 ui.zoomOut.addEventListener('click', () => graph?.zoomBy(1 / 1.25));
+ui.showCrossLinks.addEventListener('change', drawGraph);
+
+ui.search.addEventListener('input', applySearch);
 
 loadSettings();
 reflectMode();
