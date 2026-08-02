@@ -1,8 +1,7 @@
-// Nested collapsible list view.
+// Nested collapsible list over the placement forest.
 
 import { watchUrl } from './extract.js';
-
-const CHANNEL_HOME = 'https://www.youtube.com/channel/';
+import { buildForest } from './placements.js';
 
 const DEPTH_COLORS = [
   'bg-sky-500/15 text-sky-300 ring-sky-500/30',
@@ -21,107 +20,84 @@ function el(tag, className, text) {
 }
 
 function titleOf(node) {
-  if (node.isChannel) return node.channel.title;
+  if (!node) return 'Unknown video';
   if (node.video) return node.video.title;
   return node.unavailable ? 'Unavailable video' : node.id;
 }
 
-function linkOf(node) {
-  return node.isChannel ? CHANNEL_HOME + node.channel.id : watchUrl(node.id);
+function badge(depth) {
+  const color = DEPTH_COLORS[Math.min(depth - 1, DEPTH_COLORS.length - 1)];
+  return el('span', `shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ring-1 ${color}`, `d${depth}`);
 }
 
-function badge(node) {
-  const color = DEPTH_COLORS[Math.min(node.depth, DEPTH_COLORS.length - 1)];
-  return el('span', `shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ring-1 ${color}`, `d${node.depth}`);
+/** Scroll to some occurrence of a video, opening whatever hides it. */
+function jumpToVideo(videoId) {
+  const target = document.querySelector(`[data-video-id="${CSS.escape(videoId)}"]`);
+  if (!target) return;
+  for (let p = target.parentElement; p; p = p.parentElement) {
+    if (p.dataset.children === 'true' || p.dataset.unlinkedList) p.classList.remove('hidden');
+    const toggle = p.previousElementSibling?.querySelector('button[aria-expanded]');
+    if (toggle) {
+      toggle.textContent = '▾';
+      toggle.setAttribute('aria-expanded', 'true');
+    }
+  }
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  target.classList.add('ring-2', 'ring-sky-400');
+  setTimeout(() => target.classList.remove('ring-2', 'ring-sky-400'), 1500);
 }
 
-function meta(node, tree) {
+function jumpChip(tree, videoId, glyph, tip) {
+  const chip = el(
+    'button',
+    'max-w-[16rem] truncate rounded bg-slate-700/50 px-1.5 py-0.5 text-[11px] text-slate-300 hover:bg-slate-600/60',
+    `${glyph} ${titleOf(tree.nodes.get(videoId))}`,
+  );
+  chip.title = tip;
+  chip.addEventListener('click', () => jumpToVideo(videoId));
+  return chip;
+}
+
+function meta(placement, node, tree) {
   const row = el('div', 'mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-400');
-  if (node.isChannel) {
-    row.append(el('span', '', `${node.childIds.length} videos nothing links to`));
-    return row;
+  row.append(badge(placement.depth));
+
+  if (node?.offChannel) {
+    row.append(el('span', 'rounded bg-slate-700/60 px-1.5 py-0.5 text-[11px] text-slate-300', 'off-channel'));
   }
-  row.append(badge(node));
-  if (node.offChannel) {
-    row.append(
-      el(
-        'span',
-        'rounded bg-slate-700/60 px-1.5 py-0.5 text-[11px] text-slate-300',
-        'off-channel',
-      ),
+  if (node?.video?.channelTitle) row.append(el('span', 'truncate', node.video.channelTitle));
+  if (placement.children.length) row.append(el('span', '', `${placement.children.length} linked`));
+  if (node?.notFollowed) row.append(el('span', 'text-slate-500', `+${node.notFollowed} not followed`));
+  if (node?.unavailable) row.append(el('span', 'text-rose-400/80', 'private, deleted, or not found'));
+
+  // How many places this same video shows up — the reason it's worth repeating.
+  if (node && node.incoming.length > 1) {
+    const chip = el(
+      'button',
+      'rounded bg-violet-500/15 px-1.5 py-0.5 text-[11px] text-violet-300 hover:bg-violet-500/25',
+      `linked from ${node.incoming.length}`,
     );
-  }
-  if (node.video?.channelTitle) row.append(el('span', 'truncate', node.video.channelTitle));
-  if (node.childIds.length) row.append(el('span', '', `${node.childIds.length} linked`));
-  if (node.subtreeSize > 2 && node.depth === 1) {
-    row.append(el('span', 'text-slate-500', `${node.subtreeSize} in cluster`));
-  }
-  if (node.notFollowed) row.append(el('span', 'text-slate-500', `+${node.notFollowed} not followed`));
-  if (node.unavailable) {
-    row.append(el('span', 'text-rose-400/80', 'private, deleted, or not found'));
+    chip.title = node.incoming.map((id) => titleOf(tree.nodes.get(id))).join('\n');
+    chip.addEventListener('click', () => jumpToVideo(node.incoming[0]));
+    row.append(chip);
   }
 
-  // The nesting can only show one of a video's inbound links. Name the rest here,
-  // on the video itself, so a hub reads as a hub.
-  const otherSources = node.incoming.filter((id) => id !== node.parentId);
-  if (otherSources.length) {
-    row.append(el('span', 'text-violet-300/80', `linked from ${node.incoming.length}`));
-    for (const sourceId of otherSources.slice(0, 3)) {
-      row.append(jumpChip(tree, sourceId, '←', 'Also linked from this video — jump to it'));
-    }
-    if (otherSources.length > 3) {
-      row.append(el('span', 'text-slate-500', `+${otherSources.length - 3} more`));
-    }
-  }
-
-  for (const targetId of node.crossLinks) {
-    row.append(jumpChip(tree, targetId, '→', 'This video links here too — jump to it'));
+  if (placement.cyclic) {
+    row.append(el('span', 'text-amber-400/80', '↺ already higher up this chain'));
   }
   return row;
 }
 
-function jumpChip(tree, targetId, glyph, tip) {
-  const target = tree.nodes.get(targetId);
-  const chip = el(
-    'button',
-    'max-w-[16rem] truncate rounded bg-slate-700/50 px-1.5 py-0.5 text-[11px] text-slate-300 hover:bg-slate-600/60',
-    `${glyph} ${target ? titleOf(target) : targetId}`,
-  );
-  chip.title = tip;
-  chip.addEventListener('click', () => {
-    const row = document.getElementById(`node-${targetId}`);
-    if (!row) return;
-    // Make sure every collapsed ancestor is open before scrolling.
-    for (let p = row.parentElement; p; p = p.parentElement) {
-      if (p.dataset.children !== 'true' && !p.dataset.unlinkedList) continue;
-      p.classList.remove('hidden');
-      const toggle = p.previousElementSibling?.querySelector('button[aria-expanded]');
-      if (toggle) {
-        toggle.textContent = '▾';
-        toggle.setAttribute('aria-expanded', 'true');
-      }
-    }
-    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    row.classList.add('ring-2', 'ring-sky-400');
-    setTimeout(() => row.classList.remove('ring-2', 'ring-sky-400'), 1500);
-  });
-  return chip;
-}
-
-function renderNode(node, tree) {
+function renderPlacement(placement, tree) {
+  const node = tree.nodes.get(placement.id);
   const li = el('li', 'relative');
 
-  const row = el(
-    'div',
-    'group flex items-start gap-2 rounded-lg p-1.5 transition-colors hover:bg-slate-800/60',
-  );
-  row.id = `node-${node.id}`;
+  const row = el('div', 'group flex items-start gap-2 rounded-lg p-1.5 transition-colors hover:bg-slate-800/60');
+  row.id = `node-${placement.key}`;
+  row.dataset.videoId = placement.id;
 
-  const toggle = el(
-    'button',
-    'mt-1 h-5 w-5 shrink-0 rounded text-slate-400 hover:bg-slate-700 hover:text-slate-100',
-  );
-  if (node.childIds.length) {
+  const toggle = el('button', 'mt-1 h-5 w-5 shrink-0 rounded text-slate-400 hover:bg-slate-700 hover:text-slate-100');
+  if (placement.children.length) {
     toggle.textContent = '▾';
     toggle.setAttribute('aria-expanded', 'true');
   } else {
@@ -130,18 +106,14 @@ function renderNode(node, tree) {
   row.append(toggle);
 
   const thumbLink = el('a', 'block shrink-0 overflow-hidden rounded bg-slate-800');
-  thumbLink.href = linkOf(node);
+  thumbLink.href = watchUrl(placement.id);
   thumbLink.target = '_blank';
   thumbLink.rel = 'noopener';
-  const thumb = node.isChannel ? node.channel.thumb : node.video?.thumb;
-  if (thumb) {
-    const img = el(
-      'img',
-      node.isChannel ? 'h-12 w-12 rounded-full object-cover' : 'h-12 w-[5.3rem] object-cover',
-    );
+  if (node?.video?.thumb) {
+    const img = el('img', 'h-12 w-[5.3rem] object-cover');
     img.loading = 'lazy';
     img.alt = '';
-    img.src = thumb;
+    img.src = node.video.thumb;
     thumbLink.append(img);
   } else {
     thumbLink.append(el('span', 'block h-12 w-[5.3rem] bg-slate-800'));
@@ -151,25 +123,23 @@ function renderNode(node, tree) {
   const body = el('div', 'min-w-0 flex-1');
   const title = el(
     'a',
-    `block truncate text-sm font-medium ${node.unavailable ? 'text-slate-500 italic' : 'text-slate-100 hover:text-sky-300'}`,
+    `block truncate text-sm font-medium ${
+      node?.unavailable ? 'text-slate-500 italic' : 'text-slate-100 hover:text-sky-300'
+    }`,
     titleOf(node),
   );
-  title.href = linkOf(node);
+  title.href = watchUrl(placement.id);
   title.target = '_blank';
   title.rel = 'noopener';
   title.title = titleOf(node);
-  body.append(title, meta(node, tree));
+  body.append(title, meta(placement, node, tree));
   row.append(body);
-
   li.append(row);
 
-  if (node.childIds.length) {
+  if (placement.children.length) {
     const children = el('ul', 'ml-3 space-y-0.5 border-l border-slate-700/70 pl-3');
     children.dataset.children = 'true';
-    for (const childId of node.childIds) {
-      const child = tree.nodes.get(childId);
-      if (child) children.append(renderNode(child, tree));
-    }
+    for (const child of placement.children) children.append(renderPlacement(child, tree));
     li.append(children);
     toggle.addEventListener('click', () => {
       const collapsed = children.classList.toggle('hidden');
@@ -177,16 +147,15 @@ function renderNode(node, tree) {
       toggle.setAttribute('aria-expanded', String(!collapsed));
     });
   }
-
   return li;
 }
 
-export function renderList(container, tree) {
+export function renderList(container, tree, forest) {
   container.replaceChildren();
-  const root = tree.nodes.get(tree.rootId);
-  if (!root) return;
+  const roots = forest || buildForest(tree, startsOf(tree)).roots;
+
   const ul = el('ul', 'space-y-0.5');
-  ul.append(renderNode(root, tree));
+  for (const placement of roots) ul.append(renderPlacement(placement, tree));
   container.append(ul);
 
   const isolated = tree.isolatedIds || [];
@@ -205,26 +174,32 @@ export function renderList(container, tree) {
   const list = el('ul', 'mt-1 hidden space-y-0.5');
   list.dataset.unlinkedList = 'true';
   for (const id of isolated) {
-    const node = tree.nodes.get(id);
-    if (node) list.append(renderNode(node, tree));
+    list.append(renderPlacement({ key: id, id, depth: 1, children: [], cyclic: false, size: 1 }, tree));
   }
   toggle.addEventListener('click', () => {
     const hidden = list.classList.toggle('hidden');
     caret.textContent = hidden ? '▸' : '▾';
   });
-
   section.append(toggle, list);
   container.append(section);
 }
 
+/** Videos nothing else in the set links to — where the forest starts. */
+export function startsOf(tree) {
+  const root = tree.nodes.get(tree.rootId);
+  if (!root) return [];
+  return root.isChannel ? root.childIds : [tree.rootId];
+}
+
 /**
- * Show only rows whose node satisfies `predicate`, keeping the ancestors of every
- * hit so the path stays readable. Pass null to clear. Returns the match count.
+ * Show only rows whose video satisfies `predicate`, keeping the ancestors of
+ * every hit so the path stays readable. Pass null to clear. Returns the number
+ * of distinct videos matched.
  */
 export function filterList(container, tree, predicate) {
-  const rows = container.querySelectorAll('[id^="node-"]');
+  const rows = container.querySelectorAll('[data-video-id]');
   const section = container.querySelector('[data-unlinked-list]');
-  let count = 0;
+  const matched = new Set();
 
   for (const row of rows) {
     const li = row.parentElement;
@@ -233,31 +208,30 @@ export function filterList(container, tree, predicate) {
       row.classList.remove('ring-1', 'ring-sky-500/60');
       continue;
     }
-    const node = tree.nodes.get(row.id.slice('node-'.length));
+    const node = tree.nodes.get(row.dataset.videoId);
     const hit = !!node && predicate(node);
-    if (hit) count++;
+    if (hit) matched.add(row.dataset.videoId);
     row.classList.toggle('ring-1', hit);
     row.classList.toggle('ring-sky-500/60', hit);
     li.classList.toggle('hidden', !hit);
   }
 
   if (!predicate) {
-    // Back to the default shape: unlinked videos tucked away again.
     if (section) {
       section.classList.add('hidden');
-      section.previousElementSibling?.querySelector('span')?.replaceChildren('▸');
+      const caret = section.previousElementSibling?.querySelector('span');
+      if (caret) caret.textContent = '▸';
     }
     return 0;
   }
 
-  // Re-reveal the ancestors of each hit, plus the branch containers they sit in.
   for (const row of rows) {
     if (row.parentElement.classList.contains('hidden')) continue;
     for (let node = row.parentElement; node && node !== container; node = node.parentElement) {
       node.classList.remove('hidden');
     }
   }
-  return count;
+  return matched.size;
 }
 
 export function setAllExpanded(container, expanded) {

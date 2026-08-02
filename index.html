@@ -3,25 +3,11 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Link Tree — YouTube description crawler</title>
+    <title>Link Tree — Cain On Games</title>
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
     <style>
       html { color-scheme: dark; }
       body { background: #020617; }
-
-      /* Progress bar with no known total: a stripe that keeps moving, so a
-         stalled request still looks different from a frozen page. */
-      @keyframes ytree-indeterminate {
-        0%   { transform: translateX(-100%); }
-        100% { transform: translateX(400%); }
-      }
-      #progress-bar.indeterminate {
-        width: 25%;
-        animation: ytree-indeterminate 1.4s ease-in-out infinite;
-      }
-      #progress-bar:not(.indeterminate) {
-        transition: width 0.2s ease-out;
-      }
     </style>
   </head>
   <body class="h-full bg-slate-950 text-slate-200 antialiased">
@@ -35,17 +21,15 @@
 
     <script>
       // Deliberately a classic script, not a module: it still runs when the
-      // module fails to load at all, which is exactly when it's needed. Dead
-      // buttons with no explanation are the worst possible failure here.
+      // module fails to load at all, which is exactly when it's needed.
       window.addEventListener('DOMContentLoaded', function () {
         setTimeout(function () {
           if (window.__ytreeReady) return;
-          var box = document.getElementById('boot-error');
           document.getElementById('boot-error-detail').textContent =
             location.protocol === 'file:'
               ? 'This page was opened straight from disk (file://), and browsers refuse to load ES modules that way. Serve the folder instead: run "python3 -m http.server 8000" in the project directory, then open http://localhost:8000.'
-              : 'src/app.js failed to load or threw while starting. Open the browser console (⌥⌘I) for the actual error, and check that the server serving this page is still running.';
-          box.classList.remove('hidden');
+              : 'src/viewer-page.js failed to load or threw while starting. Open the browser console for the actual error.';
+          document.getElementById('boot-error').classList.remove('hidden');
         }, 1500);
       });
     </script>
@@ -55,239 +39,79 @@
         <div>
           <h1 class="text-base font-semibold text-slate-100">Link Tree</h1>
           <p class="text-xs text-slate-500">
-            Follows YouTube links found in video descriptions, depth by depth.
+            Which Cain On Games videos link to which, taken from their descriptions.
           </p>
         </div>
-        <a
-          href="https://console.cloud.google.com/apis/library/youtube.googleapis.com"
-          target="_blank"
-          rel="noopener"
-          class="hidden text-xs text-slate-500 hover:text-sky-400 sm:block"
-          >Get an API key ↗</a
-        >
+        <a href="./build.html" class="text-xs text-slate-500 hover:text-sky-400">Build data ↗</a>
       </header>
 
-      <!-- Below lg the two halves stack and the page scrolls; at lg they become
-           side-by-side panes that scroll independently. -->
-      <div class="flex flex-1 flex-col lg:flex-row lg:overflow-hidden">
-        <!-- Settings -->
-        <aside
-          class="w-full shrink-0 space-y-4 border-b border-slate-800 p-5 lg:w-80 lg:overflow-y-auto lg:border-b-0 lg:border-r"
-        >
-          <div>
-            <label for="root-video" class="mb-1 block text-xs font-medium text-slate-400"
-              >Video or channel</label
-            >
-            <input
-              id="root-video"
-              type="text"
-              value="https://www.youtube.com/@CainOnGames"
-              placeholder="video URL, or a channel /@handle"
-              class="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-sm placeholder:text-slate-600 focus:border-sky-500 focus:outline-none"
-            />
-            <p id="mode-hint" class="mt-1 text-[11px] leading-snug text-sky-400/80"></p>
+      <main class="flex min-w-0 flex-1 flex-col lg:overflow-hidden">
+        <div class="flex flex-wrap items-center gap-2 border-b border-slate-800 px-4 py-2 text-xs">
+          <div class="flex rounded-md border border-slate-700 p-0.5">
+            <button id="view-list" class="rounded px-2.5 py-1 font-medium">List</button>
+            <button id="view-graph" class="rounded px-2.5 py-1 font-medium">Graph</button>
           </div>
-
-          <div class="grid grid-cols-2 gap-3">
-            <div id="depth-field">
-              <label for="max-depth" class="mb-1 block text-xs font-medium text-slate-400"
-                >Max depth</label
-              >
-              <input
-                id="max-depth"
-                type="number"
-                min="0"
-                max="5"
-                value="2"
-                class="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-sm focus:border-sky-500 focus:outline-none"
-              />
-            </div>
-            <div>
-              <label for="max-children" class="mb-1 block text-xs font-medium text-slate-400"
-                >Links / video</label
-              >
-              <input
-                id="max-children"
-                type="number"
-                min="1"
-                max="50"
-                value="10"
-                class="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-sm focus:border-sky-500 focus:outline-none"
-              />
-            </div>
-            <div class="col-span-2">
-              <label for="max-nodes" class="mb-1 block text-xs font-medium text-slate-400"
-                >Max videos</label
-              >
-              <input
-                id="max-nodes"
-                type="number"
-                min="1"
-                max="2000"
-                value="600"
-                class="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-sm focus:border-sky-500 focus:outline-none"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label for="api-key" class="mb-1 block text-xs font-medium text-slate-400"
-              >YouTube Data API key</label
-            >
-            <input
-              id="api-key"
-              type="password"
-              autocomplete="off"
-              placeholder="AIza…"
-              class="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-sm placeholder:text-slate-600 focus:border-sky-500 focus:outline-none"
-            />
-            <p class="mt-1 text-[11px] leading-snug text-slate-600">
-              Kept in this browser's localStorage only. Restrict it to the YouTube Data API v3.
-            </p>
-          </div>
-
-          <div class="flex gap-2">
-            <button
-              id="start"
-              class="flex-1 rounded-md bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-50"
-            >
-              Build tree
+          <div id="list-tools" class="flex gap-1.5">
+            <button id="expand-all" class="rounded border border-slate-700 px-2 py-1 hover:bg-slate-800">
+              Expand all
             </button>
-            <button
-              id="cancel"
-              class="hidden rounded-md border border-slate-700 px-3 py-1.5 text-sm hover:bg-slate-800"
-            >
-              Cancel
+            <button id="collapse-all" class="rounded border border-slate-700 px-2 py-1 hover:bg-slate-800">
+              Collapse all
             </button>
           </div>
-
-          <!-- Feedback right where the button is: in the stacked layout the
-               results pane can be well below the fold. -->
-          <div id="side-status" class="hidden rounded-md border border-slate-700 bg-slate-900/60 p-2.5 text-xs">
-            <p id="side-phase" class="font-medium text-slate-200">Working…</p>
-            <p id="side-detail" class="mt-0.5 text-slate-400"></p>
-            <p id="side-counters" class="mt-0.5 text-slate-600"></p>
-          </div>
-
-          <button
-            id="export-snapshot"
-            class="hidden w-full rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
-            title="Save this crawl as data/channel.json so the published site loads without an API key"
-          >
-            Export snapshot (JSON)
-          </button>
-
-          <div class="flex items-center justify-between border-t border-slate-800 pt-3 text-xs">
-            <span id="cache-info" class="text-slate-500">Cache empty</span>
-            <button id="clear-cache" class="text-slate-400 underline hover:text-slate-200">
-              Clear cache
+          <div id="graph-tools" class="hidden items-center gap-1.5">
+            <button id="fit" class="rounded border border-slate-700 px-2 py-1 hover:bg-slate-800">
+              Fit to view
+            </button>
+            <button id="zoom-out" class="rounded border border-slate-700 px-2 py-1 hover:bg-slate-800" aria-label="Zoom out">
+              −
+            </button>
+            <button id="zoom-in" class="rounded border border-slate-700 px-2 py-1 hover:bg-slate-800" aria-label="Zoom in">
+              +
             </button>
           </div>
-        </aside>
+          <input
+            id="search"
+            type="search"
+            placeholder="Search titles…"
+            class="ml-auto w-40 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs placeholder:text-slate-600 focus:border-sky-500 focus:outline-none sm:w-56"
+          />
+          <span id="status" class="text-slate-500"></span>
+        </div>
 
-        <!-- Results -->
-        <main class="flex min-w-0 flex-1 flex-col lg:overflow-hidden">
+        <div id="topics" class="hidden border-b border-slate-800 px-4 py-2">
+          <div class="flex items-center gap-2">
+            <span class="shrink-0 text-[11px] font-medium uppercase tracking-wide text-slate-500">Topics</span>
+            <div id="topic-chips" class="flex flex-wrap gap-1.5"></div>
+            <button id="topic-more" class="shrink-0 rounded px-1.5 py-0.5 text-xs text-slate-400 underline-offset-2 hover:text-sky-300 hover:underline">
+              more
+            </button>
+            <button id="topic-clear" class="ml-auto hidden shrink-0 rounded px-1.5 py-0.5 text-xs text-slate-400 hover:text-slate-100">
+              clear
+            </button>
+          </div>
+        </div>
+
+        <div
+          id="crumbs"
+          class="hidden flex-wrap items-center gap-1 border-b border-slate-800 px-4 py-1.5 text-xs text-slate-400"
+        ></div>
+
+        <div id="banner" class="hidden border-b border-rose-900/60 bg-rose-950/40 px-4 py-2 text-sm text-rose-200"></div>
+
+        <div class="relative flex-1 lg:min-h-0 lg:overflow-hidden">
+          <div id="list-panel" class="min-h-[70vh] p-4 lg:h-full lg:min-h-0 lg:overflow-auto"></div>
+          <div id="graph-panel" class="hidden h-[70vh] cursor-grab overflow-hidden lg:h-full"></div>
           <div
-            class="flex flex-wrap items-center gap-2 border-b border-slate-800 px-4 py-2 text-xs"
+            id="empty"
+            class="pointer-events-none absolute inset-0 grid place-items-center p-8 text-center text-sm text-slate-600"
           >
-            <div class="flex rounded-md border border-slate-700 p-0.5">
-              <button id="view-list" class="rounded px-2.5 py-1 font-medium">List</button>
-              <button id="view-graph" class="rounded px-2.5 py-1 font-medium">Graph</button>
-            </div>
-            <div id="list-tools" class="flex gap-1.5">
-              <button id="expand-all" class="rounded border border-slate-700 px-2 py-1 hover:bg-slate-800">
-                Expand all
-              </button>
-              <button id="collapse-all" class="rounded border border-slate-700 px-2 py-1 hover:bg-slate-800">
-                Collapse all
-              </button>
-            </div>
-            <div id="graph-tools" class="hidden items-center gap-1.5">
-              <button id="fit" class="rounded border border-slate-700 px-2 py-1 hover:bg-slate-800">
-                Fit to view
-              </button>
-              <button id="zoom-out" class="rounded border border-slate-700 px-2 py-1 hover:bg-slate-800" aria-label="Zoom out">
-                −
-              </button>
-              <button id="zoom-in" class="rounded border border-slate-700 px-2 py-1 hover:bg-slate-800" aria-label="Zoom in">
-                +
-              </button>
-            </div>
-
-            <input
-              id="search"
-              type="search"
-              placeholder="Search titles…"
-              class="ml-auto w-40 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs placeholder:text-slate-600 focus:border-sky-500 focus:outline-none sm:w-56"
-            />
-            <span id="status" class="text-slate-500"></span>
+            Loading…
           </div>
-
-          <div id="topics" class="hidden border-b border-slate-800 px-4 py-2">
-            <div class="flex items-center gap-2">
-              <span class="shrink-0 text-[11px] font-medium uppercase tracking-wide text-slate-500"
-                >Topics</span
-              >
-              <div id="topic-chips" class="flex flex-wrap gap-1.5"></div>
-              <button
-                id="topic-more"
-                class="shrink-0 rounded px-1.5 py-0.5 text-xs text-slate-400 underline-offset-2 hover:text-sky-300 hover:underline"
-              >
-                more
-              </button>
-              <button
-                id="topic-clear"
-                class="ml-auto hidden shrink-0 rounded px-1.5 py-0.5 text-xs text-slate-400 hover:text-slate-100"
-              >
-                clear
-              </button>
-            </div>
-          </div>
-
-          <div
-            id="crumbs"
-            class="hidden flex-wrap items-center gap-1 border-b border-slate-800 px-4 py-1.5 text-xs text-slate-400"
-          ></div>
-
-          <div id="banner" class="hidden border-b border-rose-900/60 bg-rose-950/40 px-4 py-2 text-sm text-rose-200"></div>
-
-          <div class="relative flex-1 lg:min-h-0 lg:overflow-hidden">
-            <div id="list-panel" class="min-h-[70vh] p-4 lg:h-full lg:min-h-0 lg:overflow-auto"></div>
-            <!-- The SVG sizes to its box, so the graph pane needs a real height
-                 in the stacked layout where nothing else gives it one. -->
-            <div id="graph-panel" class="hidden h-[70vh] cursor-grab overflow-hidden lg:h-full"></div>
-            <div
-              id="empty"
-              class="pointer-events-none absolute inset-0 grid place-items-center p-8 text-center text-sm text-slate-600"
-            >
-              Paste a video URL or a channel handle, add your API key, then build the tree.
-            </div>
-
-            <div id="progress" class="absolute inset-0 hidden place-items-center bg-slate-950/85 p-8">
-              <div class="w-full max-w-sm space-y-3 text-center">
-                <p id="progress-phase" class="text-sm font-medium text-slate-100">Working…</p>
-                <div class="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
-                  <div id="progress-bar" class="h-full rounded-full bg-sky-500"></div>
-                </div>
-                <p id="progress-detail" class="text-xs text-slate-400"></p>
-                <p class="text-xs text-slate-600">
-                  <span id="progress-elapsed">0.0s</span> ·
-                  <span id="progress-requests">0 requests</span>
-                </p>
-                <p id="progress-stall" class="hidden text-xs text-amber-400/90"></p>
-                <button
-                  id="progress-cancel"
-                  class="rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        </main>
-      </div>
+        </div>
+      </main>
     </div>
 
-    <script type="module" src="./src/app.js"></script>
+    <script type="module" src="./src/viewer-page.js"></script>
   </body>
 </html>

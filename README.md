@@ -1,5 +1,33 @@
 # Link Tree
 
+## Two pages
+
+| Page | What it's for | Needs an API key |
+| --- | --- | --- |
+| `index.html` | Viewing the map. Loads `data/channel.json` and shows the list, graph, topics and search. | **No** |
+| `build.html` | Crawling YouTube and exporting the data file. | Yes |
+
+**Publishing workflow:** open `build.html`, paste your key, press *Build tree*, then
+*Export snapshot (JSON)*. Save the download as `data/channel.json`, commit it, push.
+Every visitor to `index.html` — on any machine, including people who aren't you —
+then gets the whole map with no key at all. Re-run it whenever you want fresher data.
+
+Without that file the viewer shows a message pointing at the build page. The key
+never leaves the build page's `localStorage` and is never committed.
+
+## A video linked from several places
+
+Each video is shown **under every video that links to it**. A hub linked by five
+others appears five times, each occurrence tagged `linked from 5`; click that tag
+to jump to another occurrence. Nothing about the layout depends on the order
+videos were discovered, and because every edge is a short hop from a parent to
+its own child, the picture stays readable — an earlier attempt at drawing the
+true many-to-many edges turned into a wall of wires at channel scale.
+
+Chains that loop back on themselves stop at the repeat, marked `↺ already higher
+up this chain`, so cycles terminate instead of recursing.
+
+
 Give it a YouTube video or a whole channel. It reads descriptions, pulls out every
 YouTube link it finds, and builds a tree of videos-linking-to-videos. Rendered as
 a collapsible list or a node-link graph.
