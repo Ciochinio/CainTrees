@@ -106,13 +106,19 @@ function nodeGroup(placement, node, at, onSelect) {
   const group = svg('g', { transform: `translate(${at.x} ${at.y})`, class: 'cursor-pointer' });
   group.dataset.videoId = placement.id;
 
+  // The node's face is a real SVG link, so middle-click, ⌘/Ctrl-click and the
+  // right-click menu all open the video the way they do anywhere else. A plain
+  // left click is intercepted below and opens the detail panel instead.
+  const link = svg('a', { href: watchUrl(placement.id), target: '_blank', rel: 'noopener' });
+  group.append(link);
+
   let stroke = DEPTH_STROKE[Math.min(placement.depth - 1, DEPTH_STROKE.length - 1)];
   if (node?.unavailable) stroke = '#7f1d1d';
   else if (node?.offChannel) stroke = '#475569';
   if (placement.isCentre) stroke = '#e2e8f0';
 
   const hub = placement.extraParents.length > 0;
-  group.append(
+  link.append(
     svg('rect', {
       width: NODE_W,
       height: NODE_H,
@@ -132,7 +138,7 @@ function nodeGroup(placement, node, at, onSelect) {
     'font-size': 12.5,
   });
   title.textContent = clip(label, 28);
-  group.append(title);
+  link.append(title);
 
   const bits = [];
   if (node?.offChannel) bits.push('off-channel');
@@ -149,13 +155,20 @@ function nodeGroup(placement, node, at, onSelect) {
 
   const sub = svg('text', { x: 12, y: 40, fill: hub ? '#c4b5fd' : '#94a3b8', 'font-size': 11 });
   sub.textContent = bits.join('  ·  ');
-  group.append(sub);
+  link.append(sub);
 
   const full = svg('title');
-  full.textContent = `${label}${node?.video?.channelTitle ? `\n${node.video.channelTitle}` : ''}\n\nClick for details`;
+  full.textContent = `${label}${
+    node?.video?.channelTitle ? `\n${node.video.channelTitle}` : ''
+  }\n\nClick for details · middle-click to watch`;
   group.append(full);
 
-  group.addEventListener('click', () => onSelect(placement));
+  link.addEventListener('click', (event) => {
+    // Let the browser do its normal thing for modified and non-left clicks.
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    onSelect(placement);
+  });
   return group;
 }
 

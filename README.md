@@ -102,7 +102,12 @@ it usable:
 - **A topic never renders more videos than its header promises.**
 - **Click a node for its detail panel** — a real `<a>` to watch it on YouTube,
   everything it links to, and everything that links to it, each tagged with the
-  topic it belongs to.
+  topic it belongs to. Clicking one of those shows that video; it doesn't move
+  the graph. **Centre on this** is what travels.
+- **Middle-click a node to just watch it.** Each node's face is a genuine SVG
+  `<a href>`, so middle-click, ⌘/Ctrl-click, shift-click and the right-click
+  menu all behave as they do on any link. Only a plain left click is intercepted,
+  to open the panel.
 
 ### Finding a video
 

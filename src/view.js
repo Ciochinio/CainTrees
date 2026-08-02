@@ -217,7 +217,12 @@ export function createView() {
     if (host) {
       button.append(el('span', 'shrink-0 rounded bg-slate-700/70 px-1.5 py-0.5 text-[10px] text-slate-300', host.label));
     }
-    button.addEventListener('click', () => centreOn(videoId));
+    // Show the video, don't travel to it — walking is what "Centre on this" is
+    // for, and doing it automatically left that button with no purpose.
+    button.addEventListener('click', () => {
+      openDetail(videoId);
+      graph?.select(videoId);
+    });
     return button;
   }
 
