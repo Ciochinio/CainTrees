@@ -39,12 +39,12 @@ function layout(roots) {
     const x = (placement.depth - 1) * COLUMN;
     if (!placement.children.length) {
       const y = cursor++ * ROW;
-      pos.set(placement.key, { x, y });
+      pos.set(placement.id, { x, y });
       return y;
     }
     const ys = placement.children.map(place);
     const y = (ys[0] + ys[ys.length - 1]) / 2;
-    pos.set(placement.key, { x, y });
+    pos.set(placement.id, { x, y });
     return y;
   };
 
@@ -83,9 +83,8 @@ function nodeGroup(placement, node, at, onFocus) {
   let stroke = DEPTH_STROKE[Math.min(placement.depth - 1, DEPTH_STROKE.length - 1)];
   if (node?.unavailable) stroke = '#7f1d1d';
   else if (node?.offChannel) stroke = '#475569';
-  else if (placement.cyclic) stroke = '#f59e0b';
 
-  const repeated = node && node.incoming.length > 1;
+  const hub = placement.extraParents.length > 0;
   group.append(
     svg('rect', {
       width: NODE_W,
@@ -93,8 +92,8 @@ function nodeGroup(placement, node, at, onFocus) {
       rx: 10,
       fill: '#0f172a',
       stroke,
-      'stroke-width': repeated ? 2 : 1,
-      ...(node?.offChannel || placement.cyclic ? { 'stroke-dasharray': '5 3' } : {}),
+      'stroke-width': hub ? 2 : 1,
+      ...(node?.offChannel ? { 'stroke-dasharray': '5 3' } : {}),
     }),
   );
 
@@ -110,12 +109,12 @@ function nodeGroup(placement, node, at, onFocus) {
 
   const bits = [];
   if (node?.offChannel) bits.push('off-channel');
-  if (placement.cyclic) bits.push('loops back');
-  if (repeated) bits.push(`linked from ${node.incoming.length}`);
+  if (hub) bits.push(`+${placement.extraParents.length} link here`);
   else if (node?.video?.channelTitle) bits.push(clip(node.video.channelTitle, 20));
   if (placement.children.length) bits.push(`${placement.children.length} linked`);
+  if (placement.offTopic?.length) bits.push(`${placement.offTopic.length} outside`);
 
-  const sub = svg('text', { x: 12, y: 40, fill: repeated ? '#c4b5fd' : '#94a3b8', 'font-size': 11 });
+  const sub = svg('text', { x: 12, y: 40, fill: hub ? '#c4b5fd' : '#94a3b8', 'font-size': 11 });
   sub.textContent = bits.join('  ·  ');
   group.append(sub);
 
@@ -152,10 +151,10 @@ export function renderGraph(container, tree, options = {}) {
 
   let drawn = 0;
   const visit = (placement) => {
-    const from = pos.get(placement.key);
+    const from = pos.get(placement.id);
     if (!from) return;
     for (const child of placement.children) {
-      const to = pos.get(child.key);
+      const to = pos.get(child.id);
       if (to) edges.append(edgePath(from, to));
       visit(child);
     }

@@ -93,29 +93,40 @@ hundred link chains stacked in one column can't be read at any zoom. What keeps
 it usable:
 
 - **Topics are the top level** — see below. Everything starts collapsed.
-- **Chains are ordered biggest-first**, so substantial ones come before singletons.
+- **A topic never renders more videos than its header promises.**
 - **Drill down.** Click any node with children in the graph to make it the root
   and see just its subtree; breadcrumbs above walk back up. ⌘/Ctrl-click opens
   the video on YouTube instead. Leaf nodes open YouTube on a plain click.
 
 ### Browsing by topic
 
-The list's top level is **topics, not chains** — the question is nearly always
-"what has he said about X", and a channel's chains stacked in one column is
-unreadable however it's laid out. So you get ~50 collapsed rows reading
-`fallout 32 videos · 29 chains`, and you open the one you want.
+The list's top level is **topics**, because the question is nearly always "what
+has he said about X". You get a collapsed index — `fallout 32 videos` — and open
+the one you want.
 
-- A chain belongs to a topic if **any** video in it carries that topic, and it's
-  then shown whole, so you keep the context of why a video sits where it does.
-- A video carrying three topics appears in three sections. That's the price of
-  subject-first browsing, and the same trade as videos repeating under each linker.
-- Unlinked videos join in as single-node chains, so everything is reachable.
-  Whatever carries no topic at all lands in **No topic** at the bottom.
-- Sections build their rows the first time you open them. Rendering every
-  section up front would be thousands of rows nobody asked for.
+**A topic shows exactly its own videos.** Open a section promising 32 videos and
+you get 32 rows: never a video from outside the topic, never the same video
+twice. `src/induce.js` takes the topic's id set and lays it out using only the
+links *between* those videos, so the ones that form a chain nest and the rest sit
+flat. Links leaving the topic appear as `also links to →` chips; clicking one
+opens whichever topic holds that video and scrolls to it.
+
+This replaced an earlier design where a topic pulled in every chain it touched,
+entire, with videos repeated under each linker. On a 600-video fixture that
+turned a 60-video topic into **5974 rows** and blew past an internal 6000-node
+cap. The same fixture now renders exactly 60.
+
+- A video carrying three topics appears in three sections — the price of
+  subject-first browsing.
+- Whatever no topic claims lands in **No topic** at the bottom.
+- Sections build their rows the first time you open them, so a closed section
+  costs nothing.
+- A video linked by several others inside a topic is placed under one of them and
+  names the rest with `←` chips, so it appears once and the count stays honest.
 - The graph draws one topic at a time, chosen with the selector in its toolbar —
   opening a topic in the list selects it there too.
-- Search narrows to chains containing a match and drops topics left with none.
+- Search narrows each section to its matching videos and drops topics left with
+  none; the header then reads `6 videos matching`.
 
 ### How topics are found
 

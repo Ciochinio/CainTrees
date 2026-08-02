@@ -1,10 +1,12 @@
-// Everything both pages share: the topic-grouped list, search, the graph and
-// its drill-down. The viewer page uses only this; the builder adds crawl
-// controls on top.
+// Everything both pages share: the topic index, search, and the graph.
+//
+// The organising unit is a topic, not the link tree. Picking a topic shows
+// exactly its videos — each once, nested where they link one another — so the
+// count on the section header is the number of rows you get.
 
-import { buildForest } from './placements.js';
-import { renderPlacement, startsOf } from './tree-list.js';
-import { buildSections, countMatches, filterSections } from './sections.js';
+import { induce } from './induce.js';
+import { jumpToVideo, renderPlacement, titleOf } from './tree-list.js';
+import { buildSections, matchingIds } from './sections.js';
 import { renderGraph } from './tree-graph.js';
 import { extractTopics } from './topics.js';
 
@@ -35,14 +37,13 @@ export function createView() {
   };
 
   let tree = null;
-  let forest = [];
   let sections = [];
-  let visible = []; // sections after the search filter
+  let visible = [];
   let graph = null;
   let graphStale = true;
   let view = 'list';
+  let graphTopic = null;
   let focusStack = [];
-  let graphTopic = null; // which section the graph is drawing
   let summary = '';
 
   const setStatus = (text) => {
@@ -77,62 +78,59 @@ export function createView() {
     return (node) => (node.video?.title || '').toLowerCase().includes(query);
   }
 
-  // --------------------------------------------------------------- list
+  /** Follow a link to a video that isn't in the open section. */
+  function openVideo(videoId) {
+    if (jumpToVideo(videoId)) return;
+    const host = sections.find((section) => section.ids.has(videoId));
+    if (!host) return;
+    const header = ui.listPanel.querySelector(`[data-section="${CSS.escape(host.term)}"]`);
+    if (!header) return;
+    if (header.nextElementSibling.classList.contains('hidden')) header.click();
+    setTimeout(() => jumpToVideo(videoId), 60);
+  }
 
-  /**
-   * Sections render collapsed and fill in their chains the first time they're
-   * opened. With a video repeating in every topic it carries, building all of
-   * them up front would be tens of thousands of rows for nothing.
-   */
-  function renderSectionList() {
+  // ---------------------------------------------------------------- list
+
+  function renderSections() {
     ui.listPanel.replaceChildren();
     const test = predicate();
 
     if (!visible.length) {
-      ui.listPanel.append(
-        Object.assign(document.createElement('p'), {
-          className: 'p-4 text-sm text-slate-500',
-          textContent: 'Nothing matches.',
-        }),
-      );
+      ui.listPanel.append(el('p', 'p-4 text-sm text-slate-500', 'Nothing matches.'));
       return;
     }
 
     for (const section of visible) {
+      const ids = matchingIds(tree, section, test);
       const block = document.createElement('section');
       block.className = 'border-b border-slate-800/70';
 
       const header = document.createElement('button');
-      header.className =
-        'flex w-full items-center gap-2 rounded px-1.5 py-2 text-left hover:bg-slate-800/40';
-      const caret = document.createElement('span');
-      caret.className = 'w-3 shrink-0 text-slate-500';
-      caret.textContent = '▸';
+      header.className = 'flex w-full items-center gap-2 rounded px-1.5 py-2 text-left hover:bg-slate-800/40';
+      header.dataset.section = section.term;
 
-      const name = document.createElement('span');
-      name.className = section.isOrphanBucket
-        ? 'text-sm font-medium text-slate-400'
-        : 'text-sm font-medium text-slate-100';
-      name.textContent = section.label;
-
-      const count = document.createElement('span');
-      count.className = 'text-xs text-slate-500';
-      const matched = countMatches(tree, section, test);
-      count.textContent = test
-        ? `${matched} matching · ${section.roots.length} chain${section.roots.length === 1 ? '' : 's'}`
-        : `${section.videos} video${section.videos === 1 ? '' : 's'} · ${section.roots.length} chain${section.roots.length === 1 ? '' : 's'}`;
-
+      const caret = el('span', 'w-3 shrink-0 text-slate-500', '▸');
+      const name = el(
+        'span',
+        section.isOrphanBucket ? 'text-sm font-medium text-slate-400' : 'text-sm font-medium text-slate-100',
+        section.label,
+      );
+      const count = el(
+        'span',
+        'text-xs text-slate-500',
+        `${ids.size} video${ids.size === 1 ? '' : 's'}${test ? ' matching' : ''}`,
+      );
       header.append(caret, name, count);
 
       const body = document.createElement('ul');
       body.className = 'hidden space-y-0.5 pb-2 pl-2';
-      body.dataset.sectionBody = section.term;
 
       let built = false;
       const toggle = (force) => {
         const open = force ?? body.classList.contains('hidden');
         if (open && !built) {
-          for (const root of section.roots) body.append(renderPlacement(root, tree));
+          const { roots } = induce(tree, ids);
+          for (const root of roots) body.append(renderPlacement(root, tree, openVideo));
           built = true;
         }
         body.classList.toggle('hidden', !open);
@@ -140,23 +138,26 @@ export function createView() {
       };
       header.addEventListener('click', () => {
         toggle();
-        // Opening a topic in the list is also how you pick one for the graph.
         if (!body.classList.contains('hidden')) selectGraphTopic(section.term);
       });
 
       block.append(header, body);
       ui.listPanel.append(block);
 
-      // A search should show its hits, not make you open 40 sections by hand.
       if (test && visible.length <= 8) toggle(true);
     }
   }
 
-  // -------------------------------------------------------------- graph
-
-  function sectionFor(term) {
-    return sections.find((section) => section.term === term) || sections[0] || null;
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = text;
+    return node;
   }
+
+  // --------------------------------------------------------------- graph
+
+  const sectionFor = (term) => sections.find((section) => section.term === term) || sections[0] || null;
 
   function fillTopicSelect() {
     if (!ui.topicSelect) return;
@@ -179,11 +180,6 @@ export function createView() {
     if (view === 'graph') drawGraph();
   }
 
-  function crumbLabel(placement) {
-    const title = tree.nodes.get(placement.id)?.video?.title || placement.id;
-    return title.length > 34 ? `${title.slice(0, 33)}…` : title;
-  }
-
   function renderCrumbs() {
     ui.crumbs.replaceChildren();
     const showing = view === 'graph' && !!tree;
@@ -193,7 +189,7 @@ export function createView() {
 
     const section = sectionFor(graphTopic);
     const home = document.createElement(focusStack.length ? 'button' : 'span');
-    home.textContent = section ? section.label : 'All chains';
+    home.textContent = section ? section.label : 'All videos';
     home.className = focusStack.length
       ? 'rounded px-1 text-slate-400 underline-offset-2 hover:text-sky-300 hover:underline'
       : 'font-medium text-slate-200';
@@ -206,14 +202,11 @@ export function createView() {
     ui.crumbs.append(home);
 
     focusStack.forEach((placement, index) => {
-      const sep = document.createElement('span');
-      sep.className = 'text-slate-600';
-      sep.textContent = '›';
-      ui.crumbs.append(sep);
-
+      ui.crumbs.append(el('span', 'text-slate-600', '›'));
       const last = index === focusStack.length - 1;
+      const label = titleOf(tree.nodes.get(placement.id));
       const crumb = document.createElement(last ? 'span' : 'button');
-      crumb.textContent = crumbLabel(placement);
+      crumb.textContent = label.length > 34 ? `${label.slice(0, 33)}…` : label;
       crumb.className = last
         ? 'font-medium text-slate-200'
         : 'rounded px-1 text-slate-400 underline-offset-2 hover:text-sky-300 hover:underline';
@@ -226,19 +219,25 @@ export function createView() {
       ui.crumbs.append(crumb);
     });
 
-    const hint = document.createElement('span');
-    hint.className = 'ml-2 text-slate-600';
-    hint.textContent = `${graph?.size ?? 0} shown · click a node to drill in · ⌘/Ctrl-click opens YouTube`;
-    ui.crumbs.append(hint);
+    ui.crumbs.append(
+      el(
+        'span',
+        'ml-2 text-slate-600',
+        `${graph?.size ?? 0} shown · click a node to drill in · ⌘/Ctrl-click opens YouTube`,
+      ),
+    );
   }
 
   function drawGraph() {
     if (!tree) return;
     const section = sectionFor(graphTopic);
+    if (!section) return;
+    const ids = matchingIds(tree, section, predicate());
+    const { roots } = induce(tree, ids);
     const focused = focusStack[focusStack.length - 1];
+
     graph = renderGraph(ui.graphPanel, tree, {
-      roots: focused ? [focused] : section ? section.roots : forest,
-      predicate: predicate(),
+      roots: focused ? [focused] : roots,
       onFocus: (placement) => {
         focusStack = [...focusStack, placement];
         drawGraph();
@@ -269,8 +268,10 @@ export function createView() {
   function applySearch() {
     if (!tree) return;
     const test = predicate();
-    visible = filterSections(tree, sections, test);
-    renderSectionList();
+    visible = test
+      ? sections.filter((section) => matchingIds(tree, section, test).size)
+      : sections;
+    renderSections();
     if (view === 'graph') drawGraph();
 
     if (!test) {
@@ -278,28 +279,18 @@ export function createView() {
       return;
     }
     const videos = new Set();
-    for (const section of visible) {
-      for (const root of section.roots) {
-        const stack = [root];
-        while (stack.length) {
-          const placement = stack.pop();
-          const node = tree.nodes.get(placement.id);
-          if (node && test(node)) videos.add(placement.id);
-          stack.push(...placement.children);
-        }
-      }
-    }
+    for (const section of visible) for (const id of matchingIds(tree, section, test)) videos.add(id);
     setStatus(
-      `${videos.size} video${videos.size === 1 ? '' : 's'} in ${visible.length} topic${visible.length === 1 ? '' : 's'} · “${ui.search.value.trim()}”`,
+      `${videos.size} video${videos.size === 1 ? '' : 's'} in ${visible.length} topic${
+        visible.length === 1 ? '' : 's'
+      } · “${ui.search.value.trim()}”`,
     );
   }
 
   /** Put a tree on screen — from a live crawl or a loaded snapshot. */
   function adopt(next, label) {
     tree = next;
-    const built = buildForest(tree, startsOf(tree));
-    forest = built.roots;
-    sections = buildSections(tree, forest, extractTopics(tree));
+    sections = buildSections(tree, extractTopics(tree));
     visible = sections;
     graphTopic = sections[0]?.term || null;
     graphStale = true;
@@ -308,17 +299,12 @@ export function createView() {
 
     ui.empty.classList.add('hidden');
     fillTopicSelect();
-    renderSectionList();
+    renderSections();
     if (view === 'graph') drawGraph();
 
     const videos = tree.nodes.size - (tree.nodes.get(tree.rootId)?.isChannel ? 1 : 0);
-    const parts = [
-      `${videos} videos`,
-      `${sections.length} topics`,
-      `${forest.length} linked chain${forest.length === 1 ? '' : 's'}`,
-    ];
+    const parts = [`${videos} videos`, `${sections.length} topics`];
     if (label) parts.push(label);
-    if (built.truncated) parts.push('display truncated');
     summary = parts.join(' · ');
     setStatus(summary);
   }
