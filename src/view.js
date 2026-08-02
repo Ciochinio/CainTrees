@@ -293,7 +293,7 @@ export function createView() {
     ui.topicSelect.replaceChildren();
     const any = document.createElement('option');
     any.value = '';
-    any.textContent = 'Any topic';
+    any.textContent = browseBy === 'playlists' ? 'Any playlist' : 'Any topic';
     ui.topicSelect.append(any);
     for (const section of sections) {
       const option = document.createElement('option');
@@ -397,7 +397,6 @@ export function createView() {
 
   function drawGraph() {
     if (!tree) return;
-<<<<<<< Updated upstream
     const centre = centred();
 
     if (centre) {
@@ -409,19 +408,12 @@ export function createView() {
         onSelect: (placement) => openDetail(placement.id),
       });
     } else {
-      const { roots } = induce(tree, graphIds());
+      const { roots } = layout(sectionFor(graphTopic), graphIds());
       graph = renderGraph(ui.graphPanel, tree, {
         roots,
         onSelect: (placement) => openDetail(placement.id),
       });
     }
-=======
-    const section = sectionFor(graphTopic);
-    if (!section) return;
-    const ids = matchingIds(tree, section, predicate());
-    const { roots } = layout(section, ids);
-    const focused = focusStack[focusStack.length - 1];
->>>>>>> Stashed changes
 
     graphStale = false;
     if (centre) graph.select(centre);
@@ -486,8 +478,8 @@ export function createView() {
   function setBrowse(mode) {
     browseBy = playlistSections.length && mode === 'playlists' ? 'playlists' : 'topics';
     sections = browseBy === 'playlists' ? playlistSections : topicSections;
-    graphTopic = sections[0]?.term || null;
-    focusStack = [];
+    graphTopic = ''; // start unfiltered so search can reach the whole channel
+    trail = [];
     graphStale = true;
     closeDetail();
 
@@ -508,17 +500,9 @@ export function createView() {
   /** Put a tree on screen — from a live crawl or a loaded snapshot. */
   function adopt(next, label) {
     tree = next;
-<<<<<<< Updated upstream
-    sections = buildSections(tree, extractTopics(tree));
-    visible = sections;
-    graphTopic = ''; // start unfiltered so search can reach the whole channel
-    graphStale = true;
-    trail = [];
-=======
     dataLabel = label || '';
     topicSections = buildSections(tree, extractTopics(tree));
     playlistSections = buildPlaylistSections(tree);
->>>>>>> Stashed changes
     ui.search.value = '';
 
     // Video-mode crawls and snapshots taken before playlists existed have none,
@@ -556,7 +540,6 @@ export function createView() {
   ui.topicSelect?.addEventListener('change', () => selectGraphTopic(ui.topicSelect.value));
   ui.detailClose.addEventListener('click', closeDetail);
   ui.detailFocus.addEventListener('click', () => {
-<<<<<<< Updated upstream
     if (detailId) centreOn(detailId);
   });
   ui.depthIn?.addEventListener('change', () => {
@@ -565,14 +548,6 @@ export function createView() {
   });
   ui.depthOut?.addEventListener('change', () => {
     graphStale = true;
-=======
-    if (!detailId) return;
-    const section = sectionFor(graphTopic);
-    const { placed } = layout(section, matchingIds(tree, section, predicate()));
-    const placement = placed.get(detailId);
-    if (!placement) return;
-    focusStack = [...focusStack, placement];
->>>>>>> Stashed changes
     drawGraph();
   });
 
