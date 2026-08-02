@@ -34,6 +34,13 @@ export function createView() {
     search: $('search'),
     crumbs: $('crumbs'),
     topicSelect: $('topic-select'),
+    detail: $('detail'),
+    detailTitle: $('detail-title'),
+    detailSub: $('detail-sub'),
+    detailWatch: $('detail-watch'),
+    detailFocus: $('detail-focus'),
+    detailClose: $('detail-close'),
+    detailLinks: $('detail-links'),
   };
 
   let tree = null;
@@ -155,6 +162,77 @@ export function createView() {
     return node;
   }
 
+  // -------------------------------------------------------- detail panel
+
+  let detailId = null;
+
+  function closeDetail() {
+    detailId = null;
+    ui.detail.classList.add('hidden');
+  }
+
+  /**
+   * Go to a video wherever it lives. If it isn't in the topic on screen, switch
+   * to one that holds it first — that's what makes a reference out of the
+   * current topic actually followable.
+   */
+  function travelTo(videoId) {
+    const section = sectionFor(graphTopic);
+    if (!section?.ids.has(videoId)) {
+      const host = sections.find((candidate) => candidate.ids.has(videoId));
+      if (host) selectGraphTopic(host.term);
+    }
+    if (view !== 'graph') setView('graph');
+    graph?.select(videoId);
+    openDetail(videoId);
+  }
+
+  function linkRow(videoId) {
+    const node = tree.nodes.get(videoId);
+    const button = el(
+      'button',
+      'flex w-full items-start gap-2 rounded p-1.5 text-left hover:bg-slate-800',
+    );
+    const label = el('span', 'min-w-0 flex-1 text-xs text-slate-200', titleOf(node));
+    button.append(label);
+
+    const host = sections.find((section) => section.ids.has(videoId));
+    const current = sectionFor(graphTopic);
+    if (host && host !== current) {
+      button.append(el('span', 'shrink-0 rounded bg-slate-700/70 px-1.5 py-0.5 text-[10px] text-slate-300', host.label));
+    }
+    button.addEventListener('click', () => travelTo(videoId));
+    return button;
+  }
+
+  function openDetail(videoId) {
+    const node = tree.nodes.get(videoId);
+    if (!node) return;
+    detailId = videoId;
+
+    ui.detailTitle.textContent = titleOf(node);
+    const bits = [node.video?.channelTitle, node.video?.publishedAt?.slice(0, 10)].filter(Boolean);
+    if (node.offChannel) bits.push('off-channel');
+    ui.detailSub.textContent = bits.join(' · ');
+    ui.detailWatch.href = `https://www.youtube.com/watch?v=${videoId}`;
+
+    ui.detailLinks.replaceChildren();
+    const group = (heading, ids) => {
+      if (!ids.length) return;
+      const wrap = el('div');
+      wrap.append(el('p', 'mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500', heading));
+      for (const id of ids) if (tree.nodes.has(id)) wrap.append(linkRow(id));
+      ui.detailLinks.append(wrap);
+    };
+    group(`Links to (${node.links.length})`, node.links);
+    group(`Linked from (${node.incoming.length})`, node.incoming);
+    if (!node.links.length && !node.incoming.length) {
+      ui.detailLinks.append(el('p', 'text-xs text-slate-500', 'No links in or out.'));
+    }
+
+    ui.detail.classList.remove('hidden');
+  }
+
   // --------------------------------------------------------------- graph
 
   const sectionFor = (term) => sections.find((section) => section.term === term) || sections[0] || null;
@@ -220,11 +298,7 @@ export function createView() {
     });
 
     ui.crumbs.append(
-      el(
-        'span',
-        'ml-2 text-slate-600',
-        `${graph?.size ?? 0} shown · click a node to drill in · ⌘/Ctrl-click opens YouTube`,
-      ),
+      el('span', 'ml-2 text-slate-600', `${graph?.size ?? 0} shown · click a node for details`),
     );
   }
 
@@ -238,12 +312,10 @@ export function createView() {
 
     graph = renderGraph(ui.graphPanel, tree, {
       roots: focused ? [focused] : roots,
-      onFocus: (placement) => {
-        focusStack = [...focusStack, placement];
-        drawGraph();
-      },
+      onSelect: (placement) => openDetail(placement.id),
     });
     graphStale = false;
+    if (detailId) graph.select(detailId);
     renderCrumbs();
   }
 
@@ -261,6 +333,7 @@ export function createView() {
     ui.viewList.classList.add(...(listActive ? ACTIVE_TAB : IDLE_TAB));
     ui.viewGraph.classList.add(...(listActive ? IDLE_TAB : ACTIVE_TAB));
 
+    if (listActive) closeDetail(); // the panel overlays the results area
     if (!listActive && tree && graphStale) drawGraph();
     else renderCrumbs();
   }
@@ -296,6 +369,7 @@ export function createView() {
     graphStale = true;
     focusStack = [];
     ui.search.value = '';
+    closeDetail();
 
     ui.empty.classList.add('hidden');
     fillTopicSelect();
@@ -326,6 +400,16 @@ export function createView() {
   ui.zoomOut.addEventListener('click', () => graph?.zoomBy(1 / 1.25));
   ui.search.addEventListener('input', applySearch);
   ui.topicSelect?.addEventListener('change', () => selectGraphTopic(ui.topicSelect.value));
+  ui.detailClose.addEventListener('click', closeDetail);
+  ui.detailFocus.addEventListener('click', () => {
+    if (!detailId) return;
+    const section = sectionFor(graphTopic);
+    const { placed } = induce(tree, matchingIds(tree, section, predicate()));
+    const placement = placed.get(detailId);
+    if (!placement) return;
+    focusStack = [...focusStack, placement];
+    drawGraph();
+  });
 
   setView('list');
 

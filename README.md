@@ -57,7 +57,13 @@ ES modules don't load over `file://`, so serve the folder:
 python3 -m http.server 8000
 ```
 
-Then open <http://localhost:8000>.
+On Windows that's `python -m http.server 8000`. Then open <http://localhost:8000>
+for the viewer, or <http://localhost:8000/build.html> to crawl.
+
+`.gitattributes` normalises line endings, so the repo is safe to work on from
+both macOS and Windows. `.DS_Store` is tracked from the initial commit; drop it
+with `git rm --cached .DS_Store` whenever convenient — `.gitignore` already
+keeps new ones out.
 
 ## Getting an API key
 
@@ -94,9 +100,11 @@ it usable:
 
 - **Topics are the top level** — see below. Everything starts collapsed.
 - **A topic never renders more videos than its header promises.**
-- **Drill down.** Click any node with children in the graph to make it the root
-  and see just its subtree; breadcrumbs above walk back up. ⌘/Ctrl-click opens
-  the video on YouTube instead. Leaf nodes open YouTube on a plain click.
+- **Click a node for its detail panel** — a real `<a>` to watch it on YouTube,
+  everything it links to, and everything that links to it. Each entry is
+  clickable: following one that lives in another topic switches topic, redraws,
+  and selects it, so a reference is never a dead end. **Focus** drills into the
+  node's subtree, and breadcrumbs walk back up.
 
 ### Browsing by topic
 

@@ -76,7 +76,7 @@ function edgePath(from, to) {
   });
 }
 
-function nodeGroup(placement, node, at, onFocus) {
+function nodeGroup(placement, node, at, onSelect) {
   const group = svg('g', { transform: `translate(${at.x} ${at.y})`, class: 'cursor-pointer' });
   group.dataset.videoId = placement.id;
 
@@ -118,22 +118,16 @@ function nodeGroup(placement, node, at, onFocus) {
   sub.textContent = bits.join('  ·  ');
   group.append(sub);
 
-  const canFocus = placement.children.length > 0;
   const full = svg('title');
-  full.textContent = `${label}${node?.video?.channelTitle ? `\n${node.video.channelTitle}` : ''}\n\n${
-    canFocus ? 'Click to focus · ⌘/Ctrl-click to open on YouTube' : 'Click to open on YouTube'
-  }`;
+  full.textContent = `${label}${node?.video?.channelTitle ? `\n${node.video.channelTitle}` : ''}\n\nClick for details`;
   group.append(full);
 
-  group.addEventListener('click', (event) => {
-    if (canFocus && !event.metaKey && !event.ctrlKey) onFocus(placement);
-    else window.open(watchUrl(placement.id), '_blank', 'noopener');
-  });
+  group.addEventListener('click', () => onSelect(placement));
   return group;
 }
 
 export function renderGraph(container, tree, options = {}) {
-  const { roots = [], onFocus = () => {}, predicate = null } = options;
+  const { roots = [], onSelect = () => {}, predicate = null } = options;
 
   container.replaceChildren();
   container.__fitObserver?.disconnect();
@@ -158,7 +152,7 @@ export function renderGraph(container, tree, options = {}) {
       if (to) edges.append(edgePath(from, to));
       visit(child);
     }
-    nodes.append(nodeGroup(placement, tree.nodes.get(placement.id), from, onFocus));
+    nodes.append(nodeGroup(placement, tree.nodes.get(placement.id), from, onSelect));
     drawn++;
   };
   roots.forEach(visit);
@@ -247,38 +241,82 @@ export function renderGraph(container, tree, options = {}) {
     { passive: false },
   );
 
-  let dragging = null;
-  let dragDistance = 0;
+  // Panning must not eat clicks. Capture is taken only once the pointer has
+  // actually travelled: grabbing it on every pointerdown re-targets the
+  // following click at the <svg>, so node clicks never fired at all.
+  const DRAG_THRESHOLD = 5;
+  let down = null;
+  let dragging = false;
+  let suppressClick = false;
+
   root.addEventListener('pointerdown', (event) => {
-    dragging = { x: event.clientX - tx, y: event.clientY - ty };
-    dragDistance = 0;
-    root.setPointerCapture(event.pointerId);
-    root.classList.add('cursor-grabbing');
+    down = { x: event.clientX, y: event.clientY, tx, ty, id: event.pointerId };
+    dragging = false;
   });
   root.addEventListener('pointermove', (event) => {
-    if (!dragging) return;
-    const nx = event.clientX - dragging.x;
-    const ny = event.clientY - dragging.y;
-    dragDistance += Math.abs(nx - tx) + Math.abs(ny - ty);
-    tx = nx;
-    ty = ny;
+    if (!down) return;
+    const dx = event.clientX - down.x;
+    const dy = event.clientY - down.y;
+    if (!dragging) {
+      if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+      dragging = true;
+      try {
+        root.setPointerCapture(down.id);
+      } catch {
+        /* capture is a nicety; panning still works without it */
+      }
+      root.classList.add('cursor-grabbing');
+    }
+    tx = down.tx + dx;
+    ty = down.ty + dy;
     apply();
   });
-  // A pan that ends over a node shouldn't also open that video.
-  root.addEventListener(
-    'click',
-    (event) => {
-      if (dragDistance > 4) event.stopPropagation();
-      dragDistance = 0;
-    },
-    true,
-  );
   const endDrag = () => {
-    dragging = null;
+    if (dragging) {
+      suppressClick = true; // a pan that ends on a node shouldn't select it
+      try {
+        root.releasePointerCapture(down.id);
+      } catch {
+        /* already released */
+      }
+    }
+    dragging = false;
+    down = null;
     root.classList.remove('cursor-grabbing');
   };
   root.addEventListener('pointerup', endDrag);
   root.addEventListener('pointercancel', endDrag);
+  root.addEventListener(
+    'click',
+    (event) => {
+      if (!suppressClick) return;
+      event.stopPropagation();
+      suppressClick = false;
+    },
+    true,
+  );
+
+  /** Ring a node and bring it to the middle — used when arriving from a link. */
+  const select = (videoId) => {
+    let found = null;
+    for (const group of nodes.children) {
+      const isIt = group.dataset.videoId === videoId;
+      const rect = group.querySelector('rect');
+      rect.setAttribute('stroke-width', isIt ? 3 : rect.dataset.baseWidth || 1);
+      if (isIt) found = group;
+    }
+    if (!found) return false;
+    const parts = found.getAttribute('transform').match(/-?[\d.]+/g) || [0, 0];
+    const box = container.getBoundingClientRect();
+    tx = box.width / 2 - (Number(parts[0]) + NODE_W / 2) * scale;
+    ty = box.height / 2 - (Number(parts[1]) + NODE_H / 2) * scale;
+    apply();
+    return true;
+  };
+  for (const group of nodes.children) {
+    const rect = group.querySelector('rect');
+    rect.dataset.baseWidth = rect.getAttribute('stroke-width');
+  }
 
   if (predicate) highlight(predicate);
   fit(true);
@@ -291,5 +329,5 @@ export function renderGraph(container, tree, options = {}) {
     container.__fitObserver = observer;
   }
 
-  return { fit, zoomBy, highlight, size: drawn };
+  return { fit, zoomBy, highlight, select, size: drawn };
 }
