@@ -4,7 +4,7 @@
 
 | Page | What it's for | Needs an API key |
 | --- | --- | --- |
-| `index.html` | Viewing the map. Loads `data/channel.json` and shows the list, graph, topics and search. | **No** |
+| `index.html` | Viewing the map. Loads `data/channel.json` and shows the list, graph, topics, playlists and search. | **No** |
 | `build.html` | Crawling YouTube and exporting the data file. | Yes |
 
 **Publishing workflow:** open `build.html`, paste your key, press *Build tree*, then
@@ -14,6 +14,10 @@ then gets the whole map with no key at all. Re-run it whenever you want fresher 
 
 Without that file the viewer shows a message pointing at the build page. The key
 never leaves the build page's `localStorage` and is never committed.
+
+Playlists live in the snapshot too, so a data file exported before they existed
+shows topics only — the **Group by** switch stays hidden until you re-run the
+build and commit the new export.
 
 ## A video linked from several places
 
@@ -89,8 +93,14 @@ run measured **27 requests** — 1 to resolve the channel, 12 to page the upload
 list, 12 for the descriptions, 2 for the off-channel leaves. That's 0.3% of a
 day's quota.
 
-Videos are cached in `localStorage` for 7 days and the uploads list for 12 hours,
-so a repeat run of the same channel usually costs nothing at all.
+Playlists add 1 request per 50 playlists, plus 1 per 50 videos in each — so a
+channel with 20 playlists costs about 21 more. Still nowhere near the ceiling,
+but that's the one part of a run that scales with something other than video
+count.
+
+Videos are cached in `localStorage` for 7 days, and playlist contents — the
+uploads list included — for 12 hours, so a repeat run of the same channel
+usually costs nothing at all.
 
 ## Making 600 videos navigable
 
@@ -168,6 +178,26 @@ cap. The same fixture now renders exactly 60.
 - Search narrows each section to its matching videos and drops topics left with
   none; the header then reads `6 videos matching`.
 
+### Browsing by playlist
+
+Topics are a guess at what a video is about; a playlist is the author saying so.
+The **Group by** switch in the toolbar swaps the whole index between the two —
+same list, same graph, same search, different sections — and it only appears
+when the data file actually carries playlists.
+
+- Sections are the channel's playlists in the channel's own order, and the
+  videos inside keep **playlist order** rather than being sorted by subtree size,
+  because a playlist is usually meant to be watched front to back. Videos that
+  link to one another still nest.
+- A playlist shows exactly the videos this crawl holds. Entries it can't show —
+  someone else's upload, a deleted video, an upload past the **Max uploads**
+  ceiling — are counted separately in the header as `3 not in this snapshot`, so
+  the number never silently disagrees with YouTube's.
+- Everything the author never filed lands in **In no playlist** at the bottom,
+  the same way **No topic** works.
+- Following a link out of a playlist switches to whichever playlist holds the
+  target, exactly as it does between topics.
+
 ### How topics are found
 
 `src/topics.js` mines subjects out of the titles so you can browse by topic
@@ -204,10 +234,12 @@ request gives up after 25 seconds with an error rather than waiting forever.
 ## How it works
 
 - `src/extract.js` — the regexes that find video ids and channel references in text.
-- `src/api.js` — batched Data API calls (videos, channels, uploads playlist), `localStorage` cache, quota counter.
+- `src/api.js` — batched Data API calls (videos, channels, playlists and their contents), `localStorage` cache, quota counter.
 - `src/crawl.js` — `crawl()` for video mode, `crawlChannel()` for channel mode.
+- `src/sections.js` — the two browse indexes: topics mined from titles, and the channel's own playlists. Both produce the same shape, so nothing downstream knows which it has.
 - `src/tree-list.js`, `src/tree-graph.js` — the two views over one data model.
-- `src/app.js` — settings, mode detection, crawl lifecycle, view toggle.
+- `src/view.js` — the shared UI: browse switch, sections, search, detail panel, graph.
+- `src/builder-page.js` — settings, mode detection, crawl lifecycle, snapshot export.
 
 Because several videos often link to the same video, the result is really a graph.
 Whichever placement wins (shortest path in video mode, first linker in channel

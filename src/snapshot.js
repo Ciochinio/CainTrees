@@ -46,6 +46,9 @@ export function toSnapshot(tree) {
     rootId: tree.rootId,
     channel: tree.channel || null,
     isolatedIds: tree.isolatedIds || [],
+    // Optional: snapshots written before playlists existed simply omit this,
+    // and the viewer falls back to topics-only browsing.
+    playlists: tree.playlists || [],
     truncated: !!tree.truncated,
     reason: tree.reason || '',
     nodes,
@@ -83,6 +86,7 @@ export function fromSnapshot(data) {
     nodes,
     channel: data.channel,
     isolatedIds: data.isolatedIds || [],
+    playlists: data.playlists || [],
     truncated: !!data.truncated,
     reason: data.reason || '',
     mode: data.mode,

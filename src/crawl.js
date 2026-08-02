@@ -1,6 +1,6 @@
 // Breadth-first walk over "video description links to other videos".
 
-import { fetchChannel, fetchUploadIds, fetchVideos } from './api.js';
+import { fetchChannel, fetchPlaylistIds, fetchPlaylists, fetchVideos } from './api.js';
 import { extractVideoIds } from './extract.js';
 
 function makeNode(id, depth, parentId) {
@@ -119,6 +119,44 @@ export async function crawl({
 }
 
 const OFF_CHANNEL_CAP = 300;
+const MAX_PLAYLISTS = 100;
+const PLAYLIST_ITEM_CAP = 500;
+
+/**
+ * The author's own playlists, narrowed to the videos this crawl actually holds.
+ *
+ * Titles mined from descriptions are a guess at what a video is about; a
+ * playlist is the author saying so. Order is preserved — a playlist is usually
+ * meant to be watched front to back — and entries this crawl never loaded
+ * (other channels, deleted videos, uploads past the cap) are dropped, so the
+ * count on a playlist is the number of videos it can actually show.
+ *
+ * Costs 1 unit per 50 playlists plus 1 per 50 videos in each.
+ */
+async function collectPlaylists(channelId, nodes, { key, signal, onProgress = () => {} }) {
+  const found = await fetchPlaylists(channelId, {
+    key,
+    signal,
+    max: MAX_PLAYLISTS,
+    onPage: (count) => onProgress({ phase: 'playlists', count }),
+  });
+
+  const playlists = [];
+  for (const [index, playlist] of found.entries()) {
+    if (signal?.aborted) throw new DOMException('Crawl cancelled', 'AbortError');
+    onProgress({ phase: 'playlists', count: index, of: found.length });
+    const { ids } = await fetchPlaylistIds(playlist.id, { key, signal, max: PLAYLIST_ITEM_CAP });
+    const videoIds = ids.filter((id) => nodes.has(id));
+    if (!videoIds.length) continue;
+    playlists.push({
+      id: playlist.id,
+      title: playlist.title,
+      itemCount: playlist.itemCount,
+      videoIds,
+    });
+  }
+  return playlists;
+}
 
 /**
  * Map a whole channel instead of expanding from one video.
@@ -135,6 +173,7 @@ export async function crawlChannel({
   ref,
   maxNodes = 600,
   maxChildren = 15,
+  withPlaylists = true,
   key,
   signal,
   onProgress = () => {},
@@ -148,7 +187,7 @@ export async function crawlChannel({
 
   abortIfCancelled();
   onProgress({ phase: 'uploads', count: 0 });
-  const { ids: uploadIds, complete } = await fetchUploadIds(channel.uploads, {
+  const { ids: uploadIds, complete } = await fetchPlaylistIds(channel.uploads, {
     key,
     signal,
     max: maxNodes,
@@ -268,6 +307,21 @@ export async function crawlChannel({
     }
   }
 
+  // Playlists are a bonus on top of a finished crawl, so a failure here — a
+  // quota wall on the last few requests, say — must not throw away everything
+  // already fetched. It's reported instead, and the tree stands without them.
+  let playlists = [];
+  let playlistsError = '';
+  if (withPlaylists) {
+    abortIfCancelled();
+    try {
+      playlists = await collectPlaylists(channel.id, nodes, { key, signal, onProgress });
+    } catch (err) {
+      if (err.name === 'AbortError') throw err;
+      playlistsError = err.message || 'Playlists could not be loaded.';
+    }
+  }
+
   const rootId = `channel:${channel.id}`;
   const root = makeNode(rootId, 0, null);
   root.isChannel = true;
@@ -304,7 +358,17 @@ export async function crawlChannel({
   }
 
   onProgress({ phase: 'done', count: nodes.size - 1 });
-  return { rootId, nodes, channel, isolatedIds, truncated, reason, mode: 'channel' };
+  return {
+    rootId,
+    nodes,
+    channel,
+    isolatedIds,
+    playlists,
+    playlistsError,
+    truncated,
+    reason,
+    mode: 'channel',
+  };
 }
 
 /** Ordered list of nodes as a depth-first walk of the tree. */

@@ -22,8 +22,12 @@ function makePlacement(id, depth) {
  * names the rest in `extraParents`, so it appears once and the row count always
  * equals `ids.size`. Videos in a link cycle — where every member has an inbound
  * edge — are broken into by promoting one to the top.
+ *
+ * Top-level entries come back biggest-subtree-first, which is the useful order
+ * for a topic. Pass `preserveOrder` for a subset whose order already means
+ * something — a playlist — and the iteration order of `ids` is kept instead.
  */
-export function induce(tree, ids) {
+export function induce(tree, ids, { preserveOrder = false } = {}) {
   const out = new Map();
   const indegree = new Map();
   for (const id of ids) {
@@ -86,7 +90,7 @@ export function induce(tree, ids) {
   const size = (placement) =>
     (placement.size = 1 + placement.children.reduce((sum, child) => sum + size(child), 0));
   roots.forEach(size);
-  roots.sort((a, b) => b.size - a.size);
+  if (!preserveOrder) roots.sort((a, b) => b.size - a.size);
 
   return { roots, placed, total: placed.size };
 }

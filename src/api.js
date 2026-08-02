@@ -3,14 +3,16 @@
 const VIDEOS_ENDPOINT = 'https://www.googleapis.com/youtube/v3/videos';
 const CHANNELS_ENDPOINT = 'https://www.googleapis.com/youtube/v3/channels';
 const PLAYLIST_ITEMS_ENDPOINT = 'https://www.googleapis.com/youtube/v3/playlistItems';
+const PLAYLISTS_ENDPOINT = 'https://www.googleapis.com/youtube/v3/playlists';
 
 const CACHE_PREFIX = 'ytree:v1:';
 const VIDEO_PREFIX = `${CACHE_PREFIX}v:`;
 const CHANNEL_PREFIX = `${CACHE_PREFIX}c:`;
-const UPLOADS_PREFIX = `${CACHE_PREFIX}u:`;
+const ITEMS_PREFIX = `${CACHE_PREFIX}pi:`;
+const PLAYLISTS_PREFIX = `${CACHE_PREFIX}pl:`;
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-const UPLOADS_TTL_MS = 12 * 60 * 60 * 1000; // a channel gains videos; don't hold this long
+const LIST_TTL_MS = 12 * 60 * 60 * 1000; // a channel gains videos; don't hold this long
 
 const BATCH_SIZE = 50; // API maximum for videos.list, and still only 1 quota unit
 const CONCURRENCY = 2;
@@ -223,16 +225,71 @@ export async function fetchChannel(ref, { key, signal } = {}) {
 }
 
 /**
- * Every video id in an uploads playlist, newest first. One request per 50 ids,
+ * Every playlist the channel publishes, in the order YouTube returns them.
+ * One request per 50 playlists, 1 unit each, cached for 12 hours.
+ *
+ * These are the author's own groupings — the counterpart to the topics mined
+ * from titles, and usually the more deliberate of the two.
+ */
+export async function fetchPlaylists(channelId, { key, signal, max = 200, onPage = () => {} } = {}) {
+  const cacheKey = PLAYLISTS_PREFIX + channelId;
+  const cached = readCache(cacheKey, LIST_TTL_MS);
+  if (cached) return cached.slice(0, max);
+
+  const playlists = [];
+  const seenTokens = new Set();
+  let pageToken;
+
+  do {
+    if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+    const body = await apiGet(
+      PLAYLISTS_ENDPOINT,
+      {
+        part: 'snippet,contentDetails',
+        maxResults: BATCH_SIZE,
+        channelId,
+        key,
+        ...(pageToken ? { pageToken } : {}),
+      },
+      signal,
+    );
+
+    const before = playlists.length;
+    for (const item of body.items || []) {
+      const snippet = item.snippet || {};
+      playlists.push({
+        id: item.id,
+        title: snippet.title || '(untitled playlist)',
+        publishedAt: snippet.publishedAt || '',
+        itemCount: item.contentDetails?.itemCount ?? 0,
+      });
+    }
+    pageToken = body.nextPageToken;
+    onPage(playlists.length);
+
+    // Same cursor guard as the item walk: never let a stuck token spin here.
+    if (playlists.length === before || (pageToken && seenTokens.has(pageToken))) break;
+    if (pageToken) seenTokens.add(pageToken);
+  } while (pageToken && playlists.length < max);
+
+  if (!pageToken) writeCache(cacheKey, playlists);
+  return playlists.slice(0, max);
+}
+
+/**
+ * Every video id in a playlist, in playlist order. One request per 50 ids,
  * 1 unit each. Cached for 12 hours since the channel keeps publishing.
  *
+ * Used for the uploads playlist that defines a channel's catalogue, and for
+ * each of the author's own playlists.
+ *
  * Returns { ids, complete } — `complete` is false only when `max` cut the walk
- * short, which is different from a channel that happens to have exactly `max`
- * uploads.
+ * short, which is different from a playlist that happens to hold exactly `max`
+ * videos.
  */
-export async function fetchUploadIds(playlistId, { key, signal, max = 1000, onPage = () => {} } = {}) {
-  const cacheKey = UPLOADS_PREFIX + playlistId;
-  const cached = readCache(cacheKey, UPLOADS_TTL_MS);
+export async function fetchPlaylistIds(playlistId, { key, signal, max = 1000, onPage = () => {} } = {}) {
+  const cacheKey = ITEMS_PREFIX + playlistId;
+  const cached = readCache(cacheKey, LIST_TTL_MS);
   if (cached) return { ids: cached.slice(0, max), complete: cached.length <= max };
 
   const ids = [];

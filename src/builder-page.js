@@ -173,6 +173,11 @@ function channelProgress({ phase, count, of }) {
   if (phase === 'uploads') return { phase: 'Listing uploads', detail: `${count} videos found so far` };
   if (phase === 'descriptions') return { phase: 'Reading descriptions', detail: `${count} of ${of}`, ratio: count / of };
   if (phase === 'offchannel') return { phase: 'Fetching off-channel links', detail: `${count} of ${of}`, ratio: count / of };
+  if (phase === 'playlists') {
+    return of
+      ? { phase: 'Reading playlists', detail: `${count} of ${of}`, ratio: count / of }
+      : { phase: 'Reading playlists', detail: `${count} found so far` };
+  }
   return { phase: 'Building the tree…' };
 }
 
@@ -230,6 +235,10 @@ async function start() {
 
     if (result.nodes.get(mode.videoId)?.unavailable) {
       view.showError('The root video came back empty — it may be private, deleted, or region-locked.');
+    } else if (result.playlistsError) {
+      view.showError(
+        `The tree is complete, but the channel's playlists could not be read: ${result.playlistsError} Exporting now gives you a snapshot with topics only.`,
+      );
     }
   } catch (err) {
     if (err.name === 'AbortError') {

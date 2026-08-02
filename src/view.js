@@ -1,13 +1,17 @@
-// Everything both pages share: the topic index, search, and the graph.
+// Everything both pages share: the browse index, search, and the graph.
 //
-// The organising unit is a topic, not the link tree. Picking a topic shows
+// The organising unit is a section, not the link tree. Picking one shows
 // exactly its videos — each once, nested where they link one another — so the
 // count on the section header is the number of rows you get.
+//
+// Sections come from one of two indexes over the same tree: topics mined from
+// titles, or the playlists the author made on the channel. The switch between
+// them is the only thing that knows the difference.
 
 import { induce } from './induce.js';
 import { buildNeighbourhood } from './neighbourhood.js';
 import { jumpToVideo, renderPlacement, titleOf } from './tree-list.js';
-import { buildSections, matchingIds } from './sections.js';
+import { buildPlaylistSections, buildSections, matchingIds } from './sections.js';
 import { renderGraph } from './tree-graph.js';
 import { extractTopics } from './topics.js';
 
@@ -23,6 +27,9 @@ export function createView() {
     empty: $('empty'),
     viewList: $('view-list'),
     viewGraph: $('view-graph'),
+    browseBy: $('browse-by'),
+    browseTopics: $('browse-topics'),
+    browsePlaylists: $('browse-playlists'),
     listTools: $('list-tools'),
     graphTools: $('graph-tools'),
     listPanel: $('list-panel'),
@@ -48,6 +55,9 @@ export function createView() {
   };
 
   let tree = null;
+  let topicSections = [];
+  let playlistSections = [];
+  let browseBy = 'topics';
   let sections = [];
   let visible = [];
   let graph = null;
@@ -58,6 +68,14 @@ export function createView() {
   // Without this there was no way back after following a link.
   let trail = [];
   let summary = '';
+  let dataLabel = '';
+
+  /** What a section is called in prose, so status lines read right in both modes. */
+  const unit = (count) =>
+    browseBy === 'playlists' ? `playlist${count === 1 ? '' : 's'}` : `topic${count === 1 ? '' : 's'}`;
+
+  /** A playlist's order is the author's; a topic's is whatever reads best. */
+  const layout = (section, ids) => induce(tree, ids, { preserveOrder: !!section?.ordered });
 
   const centred = () => (trail.length ? trail[trail.length - 1] : null);
   const depthIn = () => Number(ui.depthIn?.value ?? 1);
@@ -139,6 +157,14 @@ export function createView() {
       );
       header.append(caret, name, count);
 
+      // A playlist can name videos this crawl doesn't hold — someone else's
+      // upload, a deleted one, anything past the upload cap. Say so rather than
+      // quietly showing a smaller number than YouTube does.
+      const absent = !test && section.itemCount ? section.itemCount - section.videos : 0;
+      if (absent > 0) {
+        header.append(el('span', 'text-xs text-slate-600', `${absent} not in this snapshot`));
+      }
+
       const body = document.createElement('ul');
       body.className = 'hidden space-y-0.5 pb-2 pl-2';
 
@@ -146,7 +172,7 @@ export function createView() {
       const toggle = (force) => {
         const open = force ?? body.classList.contains('hidden');
         if (open && !built) {
-          const { roots } = induce(tree, ids);
+          const { roots } = layout(section, ids);
           for (const root of roots) body.append(renderPlacement(root, tree, openVideo));
           built = true;
         }
@@ -371,6 +397,7 @@ export function createView() {
 
   function drawGraph() {
     if (!tree) return;
+<<<<<<< Updated upstream
     const centre = centred();
 
     if (centre) {
@@ -388,6 +415,13 @@ export function createView() {
         onSelect: (placement) => openDetail(placement.id),
       });
     }
+=======
+    const section = sectionFor(graphTopic);
+    if (!section) return;
+    const ids = matchingIds(tree, section, predicate());
+    const { roots } = layout(section, ids);
+    const focused = focusStack[focusStack.length - 1];
+>>>>>>> Stashed changes
 
     graphStale = false;
     if (centre) graph.select(centre);
@@ -432,37 +466,79 @@ export function createView() {
     const videos = new Set();
     for (const section of visible) for (const id of matchingIds(tree, section, test)) videos.add(id);
     setStatus(
-      `${videos.size} video${videos.size === 1 ? '' : 's'} in ${visible.length} topic${
-        visible.length === 1 ? '' : 's'
-      } · “${ui.search.value.trim()}”`,
+      `${videos.size} video${videos.size === 1 ? '' : 's'} in ${visible.length} ${unit(
+        visible.length,
+      )} · “${ui.search.value.trim()}”`,
     );
+  }
+
+  function describe() {
+    const videos = tree.nodes.size - (tree.nodes.get(tree.rootId)?.isChannel ? 1 : 0);
+    const parts = [`${videos} videos`, `${sections.length} ${unit(sections.length)}`];
+    if (dataLabel) parts.push(dataLabel);
+    return parts.join(' · ');
+  }
+
+  /**
+   * Swap which index the page is browsing. Both are built up front from the same
+   * tree, so this is only ever a re-render — never a refetch.
+   */
+  function setBrowse(mode) {
+    browseBy = playlistSections.length && mode === 'playlists' ? 'playlists' : 'topics';
+    sections = browseBy === 'playlists' ? playlistSections : topicSections;
+    graphTopic = sections[0]?.term || null;
+    focusStack = [];
+    graphStale = true;
+    closeDetail();
+
+    const onPlaylists = browseBy === 'playlists';
+    ui.browseTopics?.classList.remove(...ACTIVE_TAB, ...IDLE_TAB);
+    ui.browsePlaylists?.classList.remove(...ACTIVE_TAB, ...IDLE_TAB);
+    ui.browseTopics?.classList.add(...(onPlaylists ? IDLE_TAB : ACTIVE_TAB));
+    ui.browsePlaylists?.classList.add(...(onPlaylists ? ACTIVE_TAB : IDLE_TAB));
+    if (ui.topicSelect) {
+      ui.topicSelect.setAttribute('aria-label', onPlaylists ? 'Playlist to draw' : 'Topic to draw');
+    }
+
+    fillTopicSelect();
+    summary = describe();
+    applySearch(); // re-renders the list, redraws the graph, and restates the count
   }
 
   /** Put a tree on screen — from a live crawl or a loaded snapshot. */
   function adopt(next, label) {
     tree = next;
+<<<<<<< Updated upstream
     sections = buildSections(tree, extractTopics(tree));
     visible = sections;
     graphTopic = ''; // start unfiltered so search can reach the whole channel
     graphStale = true;
     trail = [];
+=======
+    dataLabel = label || '';
+    topicSections = buildSections(tree, extractTopics(tree));
+    playlistSections = buildPlaylistSections(tree);
+>>>>>>> Stashed changes
     ui.search.value = '';
-    closeDetail();
+
+    // Video-mode crawls and snapshots taken before playlists existed have none,
+    // and then there's nothing to switch between.
+    const hasPlaylists = playlistSections.length > 0;
+    ui.browseBy?.classList.toggle('hidden', !hasPlaylists);
+    ui.browseBy?.classList.toggle('flex', hasPlaylists);
+    if (ui.browsePlaylists) {
+      const count = playlistSections.filter((section) => !section.isOrphanBucket).length;
+      ui.browsePlaylists.textContent = hasPlaylists ? `Playlists (${count})` : 'Playlists';
+    }
 
     ui.empty.classList.add('hidden');
-    fillTopicSelect();
-    renderSections();
-    if (view === 'graph') drawGraph();
-
-    const videos = tree.nodes.size - (tree.nodes.get(tree.rootId)?.isChannel ? 1 : 0);
-    const parts = [`${videos} videos`, `${sections.length} topics`];
-    if (label) parts.push(label);
-    summary = parts.join(' · ');
-    setStatus(summary);
+    setBrowse(browseBy);
   }
 
   ui.viewList.addEventListener('click', () => setView('list'));
   ui.viewGraph.addEventListener('click', () => setView('graph'));
+  ui.browseTopics?.addEventListener('click', () => tree && setBrowse('topics'));
+  ui.browsePlaylists?.addEventListener('click', () => tree && setBrowse('playlists'));
   ui.expandAll.addEventListener('click', () => {
     for (const header of ui.listPanel.querySelectorAll('section > button')) {
       if (header.nextElementSibling?.classList.contains('hidden')) header.click();
@@ -480,6 +556,7 @@ export function createView() {
   ui.topicSelect?.addEventListener('change', () => selectGraphTopic(ui.topicSelect.value));
   ui.detailClose.addEventListener('click', closeDetail);
   ui.detailFocus.addEventListener('click', () => {
+<<<<<<< Updated upstream
     if (detailId) centreOn(detailId);
   });
   ui.depthIn?.addEventListener('change', () => {
@@ -488,6 +565,14 @@ export function createView() {
   });
   ui.depthOut?.addEventListener('change', () => {
     graphStale = true;
+=======
+    if (!detailId) return;
+    const section = sectionFor(graphTopic);
+    const { placed } = layout(section, matchingIds(tree, section, predicate()));
+    const placement = placed.get(detailId);
+    if (!placement) return;
+    focusStack = [...focusStack, placement];
+>>>>>>> Stashed changes
     drawGraph();
   });
 
