@@ -88,25 +88,36 @@ so a repeat run of the same channel usually costs nothing at all.
 
 ## Making 600 videos navigable
 
-Most of a channel's uploads link to nothing and are linked by nothing. Drawn all
-at once they're just empty rows, so the views separate them out:
+Most of a channel's uploads link to nothing and are linked by nothing, and a few
+hundred link chains stacked in one column can't be read at any zoom. What keeps
+it usable:
 
-- **Unlinked videos** — no links in or out — are excluded from the graph and
-  collapse into one `Unlinked videos (N)` section at the bottom of the list.
-  On a 600-video fixture this took the graph from 603 nodes to 20.
-- **Clusters come first.** Top-level videos are ordered by how big their subtree
-  is, so the substantial link chains are at the top rather than in upload order.
-- **Cross-links are off by default.** They're the dashed edges, and at scale they
-  form a curtain of near-vertical lines across the whole canvas. The
-  **Cross-links** checkbox brings them back.
+- **Topics are the top level** — see below. Everything starts collapsed.
+- **Chains are ordered biggest-first**, so substantial ones come before singletons.
 - **Drill down.** Click any node with children in the graph to make it the root
   and see just its subtree; breadcrumbs above walk back up. ⌘/Ctrl-click opens
   the video on YouTube instead. Leaf nodes open YouTube on a plain click.
-- **Search** filters the list to matching titles (keeping their ancestors) and
-  dims non-matches in the graph, centring the first hit. The two views hold
-  different node sets, so the match count is reported per view.
 
-### Topic chips
+### Browsing by topic
+
+The list's top level is **topics, not chains** — the question is nearly always
+"what has he said about X", and a channel's chains stacked in one column is
+unreadable however it's laid out. So you get ~50 collapsed rows reading
+`fallout 32 videos · 29 chains`, and you open the one you want.
+
+- A chain belongs to a topic if **any** video in it carries that topic, and it's
+  then shown whole, so you keep the context of why a video sits where it does.
+- A video carrying three topics appears in three sections. That's the price of
+  subject-first browsing, and the same trade as videos repeating under each linker.
+- Unlinked videos join in as single-node chains, so everything is reachable.
+  Whatever carries no topic at all lands in **No topic** at the bottom.
+- Sections build their rows the first time you open them. Rendering every
+  section up front would be thousands of rows nobody asked for.
+- The graph draws one topic at a time, chosen with the selector in its toolbar —
+  opening a topic in the list selects it there too.
+- Search narrows to chains containing a match and drops topics left with none.
+
+### How topics are found
 
 `src/topics.js` mines subjects out of the titles so you can browse by topic
 instead of guessing at the search box. Terms are counted **per video**, and:
@@ -121,9 +132,6 @@ instead of guessing at the search box. Terms are counted **per video**, and:
 - the uploader's own `snippet.tags` are folded in when present. They arrive with
   data we already fetch, so they cost nothing.
 
-Selected chips are **OR**-ed — two topics widen the set — and the search box
-**AND**s on top, narrowing whatever the chips left. Filtering auto-expands the
-unlinked section so matches there are reachable, and clearing tucks it away again.
 
 ## While it runs
 

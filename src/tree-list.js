@@ -88,7 +88,7 @@ function meta(placement, node, tree) {
   return row;
 }
 
-function renderPlacement(placement, tree) {
+export function renderPlacement(placement, tree) {
   const node = tree.nodes.get(placement.id);
   const li = el('li', 'relative');
 

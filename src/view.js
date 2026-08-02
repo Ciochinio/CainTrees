@@ -1,13 +1,13 @@
-// Everything both pages share: rendering a tree, topic chips, search, the
-// list/graph toggle and drill-down. The viewer page uses only this; the builder
-// page adds crawl controls on top.
+// Everything both pages share: the topic-grouped list, search, the graph and
+// its drill-down. The viewer page uses only this; the builder adds crawl
+// controls on top.
 
 import { buildForest } from './placements.js';
-import { filterList, renderList, setAllExpanded, startsOf } from './tree-list.js';
+import { renderPlacement, startsOf } from './tree-list.js';
+import { buildSections, countMatches, filterSections } from './sections.js';
 import { renderGraph } from './tree-graph.js';
 import { extractTopics } from './topics.js';
 
-const TOPIC_CHIPS_COLLAPSED = 24;
 const ACTIVE_TAB = ['bg-slate-700', 'text-slate-100'];
 const IDLE_TAB = ['text-slate-400', 'hover:text-slate-200'];
 
@@ -31,24 +31,19 @@ export function createView() {
     zoomOut: $('zoom-out'),
     search: $('search'),
     crumbs: $('crumbs'),
-    topics: $('topics'),
-    topicChips: $('topic-chips'),
-    topicMore: $('topic-more'),
-    topicClear: $('topic-clear'),
+    topicSelect: $('topic-select'),
   };
 
   let tree = null;
   let forest = [];
+  let sections = [];
+  let visible = []; // sections after the search filter
   let graph = null;
   let graphStale = true;
   let view = 'list';
-  let focusStack = []; // placements drilled into, newest last
-  let topics = [];
-  let selectedTopics = new Set();
-  let topicsExpanded = false;
+  let focusStack = [];
+  let graphTopic = null; // which section the graph is drawing
   let summary = '';
-
-  // ------------------------------------------------------------- status
 
   const setStatus = (text) => {
     ui.status.textContent = text;
@@ -76,76 +71,116 @@ export function createView() {
     ui.empty.classList.remove('hidden');
   }
 
-  // ------------------------------------------------------------- topics
-
-  function renderTopics() {
-    ui.topicChips.replaceChildren();
-    ui.topics.classList.toggle('hidden', !topics.length);
-    if (!topics.length) return;
-
-    const shown = topicsExpanded ? topics : topics.slice(0, TOPIC_CHIPS_COLLAPSED);
-    for (const topic of shown) {
-      const active = selectedTopics.has(topic.term);
-      const chip = document.createElement('button');
-      chip.className = `rounded-full border px-2 py-0.5 text-xs transition-colors ${
-        active
-          ? 'border-sky-500 bg-sky-500/20 text-sky-200'
-          : 'border-slate-700 text-slate-300 hover:border-slate-600 hover:bg-slate-800'
-      }`;
-      chip.textContent = `${topic.label} ${topic.count}`;
-      chip.addEventListener('click', () => {
-        if (!selectedTopics.delete(topic.term)) selectedTopics.add(topic.term);
-        renderTopics();
-        applyFilters();
-      });
-      ui.topicChips.append(chip);
-    }
-
-    ui.topicMore.classList.toggle('hidden', topics.length <= TOPIC_CHIPS_COLLAPSED);
-    ui.topicMore.textContent = topicsExpanded
-      ? 'fewer'
-      : `+${topics.length - TOPIC_CHIPS_COLLAPSED} more`;
-    ui.topicClear.classList.toggle('hidden', selectedTopics.size === 0);
+  function predicate() {
+    const query = ui.search.value.trim().toLowerCase();
+    if (!query) return null;
+    return (node) => (node.video?.title || '').toLowerCase().includes(query);
   }
+
+  // --------------------------------------------------------------- list
 
   /**
-   * Selected chips are OR-ed together — picking two topics widens the set —
-   * while the search box narrows whatever the chips left. Null means "no filter".
+   * Sections render collapsed and fill in their chains the first time they're
+   * opened. With a video repeating in every topic it carries, building all of
+   * them up front would be tens of thousands of rows for nothing.
    */
-  function buildPredicate() {
-    const query = ui.search.value.trim().toLowerCase();
-    if (!query && !selectedTopics.size) return null;
-    const wanted = topics.filter((topic) => selectedTopics.has(topic.term));
-    return (node) => {
-      if (wanted.length && !wanted.some((topic) => topic.ids.has(node.id))) return false;
-      if (!query) return true;
-      return (node.video?.title || '').toLowerCase().includes(query);
-    };
-  }
+  function renderSectionList() {
+    ui.listPanel.replaceChildren();
+    const test = predicate();
 
-  function applyFilters() {
-    if (!tree) return;
-    const predicate = buildPredicate();
-    const listMatches = filterList(ui.listPanel, tree, predicate);
-    const graphMatches = graph ? graph.highlight(predicate) : 0;
-
-    if (!predicate) {
-      setStatus(summary);
+    if (!visible.length) {
+      ui.listPanel.append(
+        Object.assign(document.createElement('p'), {
+          className: 'p-4 text-sm text-slate-500',
+          textContent: 'Nothing matches.',
+        }),
+      );
       return;
     }
-    const matches = view === 'graph' ? graphMatches : listMatches;
-    const bits = [...selectedTopics];
-    const query = ui.search.value.trim();
-    if (query) bits.push(`“${query}”`);
-    const scope = view === 'graph' ? ' in the graph' : '';
-    setStatus(`${matches} video${matches === 1 ? '' : 's'}${scope} · ${bits.join(' + ')}`);
+
+    for (const section of visible) {
+      const block = document.createElement('section');
+      block.className = 'border-b border-slate-800/70';
+
+      const header = document.createElement('button');
+      header.className =
+        'flex w-full items-center gap-2 rounded px-1.5 py-2 text-left hover:bg-slate-800/40';
+      const caret = document.createElement('span');
+      caret.className = 'w-3 shrink-0 text-slate-500';
+      caret.textContent = '▸';
+
+      const name = document.createElement('span');
+      name.className = section.isOrphanBucket
+        ? 'text-sm font-medium text-slate-400'
+        : 'text-sm font-medium text-slate-100';
+      name.textContent = section.label;
+
+      const count = document.createElement('span');
+      count.className = 'text-xs text-slate-500';
+      const matched = countMatches(tree, section, test);
+      count.textContent = test
+        ? `${matched} matching · ${section.roots.length} chain${section.roots.length === 1 ? '' : 's'}`
+        : `${section.videos} video${section.videos === 1 ? '' : 's'} · ${section.roots.length} chain${section.roots.length === 1 ? '' : 's'}`;
+
+      header.append(caret, name, count);
+
+      const body = document.createElement('ul');
+      body.className = 'hidden space-y-0.5 pb-2 pl-2';
+      body.dataset.sectionBody = section.term;
+
+      let built = false;
+      const toggle = (force) => {
+        const open = force ?? body.classList.contains('hidden');
+        if (open && !built) {
+          for (const root of section.roots) body.append(renderPlacement(root, tree));
+          built = true;
+        }
+        body.classList.toggle('hidden', !open);
+        caret.textContent = open ? '▾' : '▸';
+      };
+      header.addEventListener('click', () => {
+        toggle();
+        // Opening a topic in the list is also how you pick one for the graph.
+        if (!body.classList.contains('hidden')) selectGraphTopic(section.term);
+      });
+
+      block.append(header, body);
+      ui.listPanel.append(block);
+
+      // A search should show its hits, not make you open 40 sections by hand.
+      if (test && visible.length <= 8) toggle(true);
+    }
   }
 
   // -------------------------------------------------------------- graph
 
+  function sectionFor(term) {
+    return sections.find((section) => section.term === term) || sections[0] || null;
+  }
+
+  function fillTopicSelect() {
+    if (!ui.topicSelect) return;
+    ui.topicSelect.replaceChildren();
+    for (const section of sections) {
+      const option = document.createElement('option');
+      option.value = section.term;
+      option.textContent = `${section.label} (${section.videos})`;
+      ui.topicSelect.append(option);
+    }
+    if (graphTopic) ui.topicSelect.value = graphTopic;
+  }
+
+  function selectGraphTopic(term) {
+    if (graphTopic === term) return;
+    graphTopic = term;
+    if (ui.topicSelect) ui.topicSelect.value = term;
+    focusStack = [];
+    graphStale = true;
+    if (view === 'graph') drawGraph();
+  }
+
   function crumbLabel(placement) {
-    const node = tree.nodes.get(placement.id);
-    const title = node?.video?.title || placement.id;
+    const title = tree.nodes.get(placement.id)?.video?.title || placement.id;
     return title.length > 34 ? `${title.slice(0, 33)}…` : title;
   }
 
@@ -156,8 +191,9 @@ export function createView() {
     ui.crumbs.classList.toggle('flex', showing);
     if (!showing) return;
 
+    const section = sectionFor(graphTopic);
     const home = document.createElement(focusStack.length ? 'button' : 'span');
-    home.textContent = tree.channel?.title || 'All chains';
+    home.textContent = section ? section.label : 'All chains';
     home.className = focusStack.length
       ? 'rounded px-1 text-slate-400 underline-offset-2 hover:text-sky-300 hover:underline'
       : 'font-medium text-slate-200';
@@ -198,10 +234,11 @@ export function createView() {
 
   function drawGraph() {
     if (!tree) return;
+    const section = sectionFor(graphTopic);
     const focused = focusStack[focusStack.length - 1];
     graph = renderGraph(ui.graphPanel, tree, {
-      roots: focused ? [focused] : forest,
-      predicate: buildPredicate(),
+      roots: focused ? [focused] : section ? section.roots : forest,
+      predicate: predicate(),
       onFocus: (placement) => {
         focusStack = [...focusStack, placement];
         drawGraph();
@@ -227,7 +264,34 @@ export function createView() {
 
     if (!listActive && tree && graphStale) drawGraph();
     else renderCrumbs();
-    if (buildPredicate()) applyFilters();
+  }
+
+  function applySearch() {
+    if (!tree) return;
+    const test = predicate();
+    visible = filterSections(tree, sections, test);
+    renderSectionList();
+    if (view === 'graph') drawGraph();
+
+    if (!test) {
+      setStatus(summary);
+      return;
+    }
+    const videos = new Set();
+    for (const section of visible) {
+      for (const root of section.roots) {
+        const stack = [root];
+        while (stack.length) {
+          const placement = stack.pop();
+          const node = tree.nodes.get(placement.id);
+          if (node && test(node)) videos.add(placement.id);
+          stack.push(...placement.children);
+        }
+      }
+    }
+    setStatus(
+      `${videos.size} video${videos.size === 1 ? '' : 's'} in ${visible.length} topic${visible.length === 1 ? '' : 's'} · “${ui.search.value.trim()}”`,
+    );
   }
 
   /** Put a tree on screen — from a live crawl or a loaded snapshot. */
@@ -235,22 +299,24 @@ export function createView() {
     tree = next;
     const built = buildForest(tree, startsOf(tree));
     forest = built.roots;
+    sections = buildSections(tree, forest, extractTopics(tree));
+    visible = sections;
+    graphTopic = sections[0]?.term || null;
     graphStale = true;
     focusStack = [];
     ui.search.value = '';
-    selectedTopics = new Set();
-    topicsExpanded = false;
-    topics = extractTopics(tree);
-    renderTopics();
 
     ui.empty.classList.add('hidden');
-    renderList(ui.listPanel, tree, forest);
+    fillTopicSelect();
+    renderSectionList();
     if (view === 'graph') drawGraph();
 
     const videos = tree.nodes.size - (tree.nodes.get(tree.rootId)?.isChannel ? 1 : 0);
-    const parts = [`${videos} videos`, `${forest.length} chains`];
-    if (built.count !== forest.length) parts.push(`${built.count} placements`);
-    if (tree.isolatedIds?.length) parts.push(`${tree.isolatedIds.length} unlinked`);
+    const parts = [
+      `${videos} videos`,
+      `${sections.length} topics`,
+      `${forest.length} linked chain${forest.length === 1 ? '' : 's'}`,
+    ];
     if (label) parts.push(label);
     if (built.truncated) parts.push('display truncated');
     summary = parts.join(' · ');
@@ -259,21 +325,21 @@ export function createView() {
 
   ui.viewList.addEventListener('click', () => setView('list'));
   ui.viewGraph.addEventListener('click', () => setView('graph'));
-  ui.expandAll.addEventListener('click', () => setAllExpanded(ui.listPanel, true));
-  ui.collapseAll.addEventListener('click', () => setAllExpanded(ui.listPanel, false));
+  ui.expandAll.addEventListener('click', () => {
+    for (const header of ui.listPanel.querySelectorAll('section > button')) {
+      if (header.nextElementSibling?.classList.contains('hidden')) header.click();
+    }
+  });
+  ui.collapseAll.addEventListener('click', () => {
+    for (const header of ui.listPanel.querySelectorAll('section > button')) {
+      if (!header.nextElementSibling?.classList.contains('hidden')) header.click();
+    }
+  });
   ui.fit.addEventListener('click', () => graph?.fit());
   ui.zoomIn.addEventListener('click', () => graph?.zoomBy(1.25));
   ui.zoomOut.addEventListener('click', () => graph?.zoomBy(1 / 1.25));
-  ui.search.addEventListener('input', applyFilters);
-  ui.topicMore.addEventListener('click', () => {
-    topicsExpanded = !topicsExpanded;
-    renderTopics();
-  });
-  ui.topicClear.addEventListener('click', () => {
-    selectedTopics.clear();
-    renderTopics();
-    applyFilters();
-  });
+  ui.search.addEventListener('input', applySearch);
+  ui.topicSelect?.addEventListener('change', () => selectGraphTopic(ui.topicSelect.value));
 
   setView('list');
 
