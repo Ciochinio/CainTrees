@@ -268,13 +268,12 @@ export function renderGraph(container, tree, options = {}) {
   root.addEventListener('pointercancel', endDrag);
 
   /**
-   * Dim everything that doesn't match, and centre the first hit. Returns the
-   * number of matches so the caller can report "no results".
+   * Dim every node failing `predicate`, and centre the first hit. Pass null to
+   * clear. Returns the number of matches so the caller can report "no results".
    */
-  const highlight = (query) => {
-    const needle = String(query || '').trim().toLowerCase();
+  const highlight = (predicate) => {
     const groups = [...nodes.children];
-    if (!needle) {
+    if (!predicate) {
       for (const group of groups) group.setAttribute('opacity', 1);
       return 0;
     }
@@ -282,8 +281,7 @@ export function renderGraph(container, tree, options = {}) {
     let count = 0;
     for (const group of groups) {
       const node = tree.nodes.get(group.dataset.nodeId);
-      const label = (node?.video?.title || node?.channel?.title || '').toLowerCase();
-      const hit = label.includes(needle);
+      const hit = !!node && predicate(node);
       group.setAttribute('opacity', hit ? 1 : 0.15);
       if (hit) {
         count++;
@@ -298,6 +296,8 @@ export function renderGraph(container, tree, options = {}) {
     }
     return count;
   };
+
+  if (options.predicate) highlight(options.predicate);
 
   fit(true);
   if (!fitted) {

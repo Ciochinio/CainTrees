@@ -78,6 +78,25 @@ at once they're just empty rows, so the views separate them out:
   dims non-matches in the graph, centring the first hit. The two views hold
   different node sets, so the match count is reported per view.
 
+### Topic chips
+
+`src/topics.js` mines subjects out of the titles so you can browse by topic
+instead of guessing at the search box. Terms are counted **per video**, and:
+
+- anything appearing in more than 35% of the catalogue is dropped — "game" on a
+  game-dev channel is not a topic;
+- a two-word phrase survives only if its count is within 80% of its widest
+  constituent, so `outer worlds` is kept as a phrase (and replaces `outer` and
+  `worlds`) while `combat design` is dropped as a mere slice of `combat`;
+- plurals are folded together, but the chip shows the most common spelling —
+  `analytics`, not the stemmed `analytic`;
+- the uploader's own `snippet.tags` are folded in when present. They arrive with
+  data we already fetch, so they cost nothing.
+
+Selected chips are **OR**-ed — two topics widen the set — and the search box
+**AND**s on top, narrowing whatever the chips left. Filtering auto-expands the
+unlinked section so matches there are reachable, and clearing tucks it away again.
+
 ## While it runs
 
 A channel run is almost entirely time spent waiting on the API — the uploads list

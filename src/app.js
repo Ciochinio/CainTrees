@@ -5,6 +5,7 @@ import { crawl, crawlChannel } from './crawl.js';
 import { parseChannelInput, parseVideoInput } from './extract.js';
 import { filterList, renderList, setAllExpanded } from './tree-list.js';
 import { renderGraph } from './tree-graph.js';
+import { extractTopics } from './topics.js';
 
 const SETTINGS_KEY = 'ytree:settings';
 const API_KEY_KEY = 'ytree:apikey';
@@ -52,6 +53,10 @@ const ui = {
   showCrossLinks: $('show-cross-links'),
   search: $('search'),
   crumbs: $('crumbs'),
+  topics: $('topics'),
+  topicChips: $('topic-chips'),
+  topicMore: $('topic-more'),
+  topicClear: $('topic-clear'),
 };
 
 const ACTIVE_TAB = ['bg-slate-700', 'text-slate-100'];
@@ -63,6 +68,9 @@ let graphStale = true;
 let view = 'list';
 let controller = null;
 let focusId = null; // graph drill-down: which node is acting as the root
+let topics = [];
+let selectedTopics = new Set();
+let topicsExpanded = false;
 
 // ---------------------------------------------------------------- settings
 
@@ -201,24 +209,78 @@ function renderCrumbs(rootId) {
   }
 }
 
+// -------------------------------------------------------------- topics
+
+const TOPIC_CHIPS_COLLAPSED = 24;
+
+function renderTopics() {
+  ui.topicChips.replaceChildren();
+  const has = topics.length > 0;
+  ui.topics.classList.toggle('hidden', !has);
+  if (!has) return;
+
+  const shown = topicsExpanded ? topics : topics.slice(0, TOPIC_CHIPS_COLLAPSED);
+  for (const topic of shown) {
+    const active = selectedTopics.has(topic.term);
+    const chip = document.createElement('button');
+    chip.className = `rounded-full border px-2 py-0.5 text-xs transition-colors ${
+      active
+        ? 'border-sky-500 bg-sky-500/20 text-sky-200'
+        : 'border-slate-700 text-slate-300 hover:border-slate-600 hover:bg-slate-800'
+    }`;
+    chip.textContent = `${topic.label} ${topic.count}`;
+    chip.addEventListener('click', () => {
+      if (!selectedTopics.delete(topic.term)) selectedTopics.add(topic.term);
+      renderTopics();
+      applyFilters();
+    });
+    ui.topicChips.append(chip);
+  }
+
+  ui.topicMore.classList.toggle('hidden', topics.length <= TOPIC_CHIPS_COLLAPSED);
+  ui.topicMore.textContent = topicsExpanded ? 'fewer' : `+${topics.length - TOPIC_CHIPS_COLLAPSED} more`;
+  ui.topicClear.classList.toggle('hidden', selectedTopics.size === 0);
+}
+
+/**
+ * Selected chips are OR-ed together — picking two topics widens the set — while
+ * the search box narrows whatever the chips left. Returns null when nothing is
+ * filtering, which both views read as "show everything".
+ */
+function buildPredicate() {
+  const query = ui.search.value.trim().toLowerCase();
+  if (!query && !selectedTopics.size) return null;
+
+  const wanted = topics.filter((topic) => selectedTopics.has(topic.term));
+  return (node) => {
+    if (wanted.length && !wanted.some((topic) => topic.ids.has(node.id))) return false;
+    if (!query) return true;
+    const label = (node.video?.title || node.channel?.title || '').toLowerCase();
+    return label.includes(query);
+  };
+}
+
 /**
  * The two views hold different node sets — the graph shows only the linked
- * clusters — so a query legitimately matches a different number in each. Report
- * whichever view is on screen.
+ * clusters — so a filter legitimately matches a different number in each.
+ * Report whichever view is on screen.
  */
-function applySearch() {
+function applyFilters() {
   if (!tree) return;
-  const query = ui.search.value.trim();
-  const listMatches = filterList(ui.listPanel, tree, query);
-  const graphMatches = graph ? graph.highlight(query) : 0;
+  const predicate = buildPredicate();
+  const listMatches = filterList(ui.listPanel, tree, predicate);
+  const graphMatches = graph ? graph.highlight(predicate) : 0;
 
-  if (!query) {
+  if (!predicate) {
     setStatus(lastSummary);
     return;
   }
   const matches = view === 'graph' ? graphMatches : listMatches;
+  const bits = [...selectedTopics];
+  const query = ui.search.value.trim();
+  if (query) bits.push(`“${query}”`);
   const scope = view === 'graph' ? ' in the graph' : '';
-  setStatus(`${matches} match${matches === 1 ? '' : 'es'}${scope} for “${query}”`);
+  setStatus(`${matches} match${matches === 1 ? '' : 'es'}${scope} · ${bits.join(' + ')}`);
 }
 
 function drawGraph() {
@@ -227,6 +289,7 @@ function drawGraph() {
   graph = renderGraph(ui.graphPanel, tree, {
     rootId,
     showCrossLinks: ui.showCrossLinks.checked,
+    predicate: buildPredicate(),
     onFocus: (id) => {
       focusId = id;
       drawGraph();
@@ -234,7 +297,6 @@ function drawGraph() {
   });
   graphStale = false;
   renderCrumbs(rootId);
-  if (ui.search.value) graph.highlight(ui.search.value);
 }
 
 function setView(next) {
@@ -253,7 +315,7 @@ function setView(next) {
 
   if (!listActive && tree && graphStale) drawGraph();
   else renderCrumbs(focusId && tree?.nodes.has(focusId) ? focusId : tree?.rootId);
-  if (ui.search.value.trim()) applySearch();
+  if (buildPredicate()) applyFilters();
 }
 
 function setRunning(running) {
@@ -406,6 +468,10 @@ async function start() {
     graphStale = true;
     focusId = null;
     ui.search.value = '';
+    selectedTopics = new Set();
+    topicsExpanded = false;
+    topics = extractTopics(result);
+    renderTopics();
     setProgress({ phase: 'Rendering…', detail: `${result.nodes.size} nodes` });
     ui.empty.classList.add('hidden');
     renderList(ui.listPanel, tree);
@@ -461,7 +527,16 @@ ui.zoomIn.addEventListener('click', () => graph?.zoomBy(1.25));
 ui.zoomOut.addEventListener('click', () => graph?.zoomBy(1 / 1.25));
 ui.showCrossLinks.addEventListener('change', drawGraph);
 
-ui.search.addEventListener('input', applySearch);
+ui.search.addEventListener('input', applyFilters);
+ui.topicMore.addEventListener('click', () => {
+  topicsExpanded = !topicsExpanded;
+  renderTopics();
+});
+ui.topicClear.addEventListener('click', () => {
+  selectedTopics.clear();
+  renderTopics();
+  applyFilters();
+});
 
 loadSettings();
 reflectMode();

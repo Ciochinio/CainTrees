@@ -105,6 +105,7 @@ function toVideo(item) {
     channelTitle: snippet.channelTitle || '',
     description: snippet.description || '',
     publishedAt: snippet.publishedAt || '',
+    tags: snippet.tags || [], // free with the snippet part; feeds topic facets
     thumb: (thumbs.medium || thumbs.default || {}).url || '',
   };
 }

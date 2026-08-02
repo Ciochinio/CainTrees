@@ -186,6 +186,7 @@ export function renderList(container, tree) {
   toggle.append(caret, el('span', '', `Unlinked videos (${isolated.length})`));
 
   const list = el('ul', 'mt-1 hidden space-y-0.5');
+  list.dataset.unlinkedList = 'true';
   for (const id of isolated) {
     const node = tree.nodes.get(id);
     if (node) list.append(renderNode(node, tree));
@@ -200,37 +201,43 @@ export function renderList(container, tree) {
 }
 
 /**
- * Show only rows matching `query`, keeping the ancestors of every hit so the
- * path stays readable. Returns the number of matches.
+ * Show only rows whose node satisfies `predicate`, keeping the ancestors of every
+ * hit so the path stays readable. Pass null to clear. Returns the match count.
  */
-export function filterList(container, tree, query) {
-  const needle = String(query || '').trim().toLowerCase();
+export function filterList(container, tree, predicate) {
   const rows = container.querySelectorAll('[id^="node-"]');
+  const section = container.querySelector('[data-unlinked-list]');
   let count = 0;
 
   for (const row of rows) {
     const li = row.parentElement;
-    if (!needle) {
+    if (!predicate) {
       li.classList.remove('hidden');
       row.classList.remove('ring-1', 'ring-sky-500/60');
       continue;
     }
     const node = tree.nodes.get(row.id.slice('node-'.length));
-    const label = (node?.video?.title || node?.channel?.title || '').toLowerCase();
-    const hit = label.includes(needle);
+    const hit = !!node && predicate(node);
     if (hit) count++;
     row.classList.toggle('ring-1', hit);
     row.classList.toggle('ring-sky-500/60', hit);
     li.classList.toggle('hidden', !hit);
   }
 
-  if (needle) {
-    // Re-reveal the ancestors of each hit, plus the branch containers they sit in.
-    for (const row of rows) {
-      if (row.parentElement.classList.contains('hidden')) continue;
-      for (let el2 = row.parentElement; el2 && el2 !== container; el2 = el2.parentElement) {
-        el2.classList.remove('hidden');
-      }
+  if (!predicate) {
+    // Back to the default shape: unlinked videos tucked away again.
+    if (section) {
+      section.classList.add('hidden');
+      section.previousElementSibling?.querySelector('span')?.replaceChildren('▸');
+    }
+    return 0;
+  }
+
+  // Re-reveal the ancestors of each hit, plus the branch containers they sit in.
+  for (const row of rows) {
+    if (row.parentElement.classList.contains('hidden')) continue;
+    for (let node = row.parentElement; node && node !== container; node = node.parentElement) {
+      node.classList.remove('hidden');
     }
   }
   return count;
