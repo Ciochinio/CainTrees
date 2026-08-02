@@ -61,34 +61,51 @@ function meta(node, tree) {
     row.append(el('span', 'text-rose-400/80', 'private, deleted, or not found'));
   }
 
+  // The nesting can only show one of a video's inbound links. Name the rest here,
+  // on the video itself, so a hub reads as a hub.
+  const otherSources = node.incoming.filter((id) => id !== node.parentId);
+  if (otherSources.length) {
+    row.append(el('span', 'text-violet-300/80', `linked from ${node.incoming.length}`));
+    for (const sourceId of otherSources.slice(0, 3)) {
+      row.append(jumpChip(tree, sourceId, '←', 'Also linked from this video — jump to it'));
+    }
+    if (otherSources.length > 3) {
+      row.append(el('span', 'text-slate-500', `+${otherSources.length - 3} more`));
+    }
+  }
+
   for (const targetId of node.crossLinks) {
-    const target = tree.nodes.get(targetId);
-    const chip = el(
-      'button',
-      'max-w-[16rem] truncate rounded bg-slate-700/50 px-1.5 py-0.5 text-[11px] text-slate-300 hover:bg-slate-600/60',
-      `↩ ${target ? titleOf(target) : targetId}`,
-    );
-    chip.title = 'Already shown elsewhere in the tree — jump to it';
-    chip.addEventListener('click', () => {
-      const el2 = document.getElementById(`node-${targetId}`);
-      if (!el2) return;
-      // Make sure every collapsed ancestor is open before scrolling.
-      for (let p = el2.parentElement; p; p = p.parentElement) {
-        if (p.dataset.children !== 'true') continue;
-        p.classList.remove('hidden');
-        const toggle = p.previousElementSibling?.querySelector('button[aria-expanded]');
-        if (toggle) {
-          toggle.textContent = '▾';
-          toggle.setAttribute('aria-expanded', 'true');
-        }
-      }
-      el2.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      el2.classList.add('ring-2', 'ring-sky-400');
-      setTimeout(() => el2.classList.remove('ring-2', 'ring-sky-400'), 1500);
-    });
-    row.append(chip);
+    row.append(jumpChip(tree, targetId, '→', 'This video links here too — jump to it'));
   }
   return row;
+}
+
+function jumpChip(tree, targetId, glyph, tip) {
+  const target = tree.nodes.get(targetId);
+  const chip = el(
+    'button',
+    'max-w-[16rem] truncate rounded bg-slate-700/50 px-1.5 py-0.5 text-[11px] text-slate-300 hover:bg-slate-600/60',
+    `${glyph} ${target ? titleOf(target) : targetId}`,
+  );
+  chip.title = tip;
+  chip.addEventListener('click', () => {
+    const row = document.getElementById(`node-${targetId}`);
+    if (!row) return;
+    // Make sure every collapsed ancestor is open before scrolling.
+    for (let p = row.parentElement; p; p = p.parentElement) {
+      if (p.dataset.children !== 'true' && !p.dataset.unlinkedList) continue;
+      p.classList.remove('hidden');
+      const toggle = p.previousElementSibling?.querySelector('button[aria-expanded]');
+      if (toggle) {
+        toggle.textContent = '▾';
+        toggle.setAttribute('aria-expanded', 'true');
+      }
+    }
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    row.classList.add('ring-2', 'ring-sky-400');
+    setTimeout(() => row.classList.remove('ring-2', 'ring-sky-400'), 1500);
+  });
+  return chip;
 }
 
 function renderNode(node, tree) {

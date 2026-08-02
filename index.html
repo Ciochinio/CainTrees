@@ -169,6 +169,14 @@
             <p id="side-counters" class="mt-0.5 text-slate-600"></p>
           </div>
 
+          <button
+            id="export-snapshot"
+            class="hidden w-full rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
+            title="Save this crawl as data/channel.json so the published site loads without an API key"
+          >
+            Export snapshot (JSON)
+          </button>
+
           <div class="flex items-center justify-between border-t border-slate-800 pt-3 text-xs">
             <span id="cache-info" class="text-slate-500">Cache empty</span>
             <button id="clear-cache" class="text-slate-400 underline hover:text-slate-200">
@@ -204,10 +212,6 @@
               <button id="zoom-in" class="rounded border border-slate-700 px-2 py-1 hover:bg-slate-800" aria-label="Zoom in">
                 +
               </button>
-              <label class="flex cursor-pointer items-center gap-1.5 rounded border border-slate-700 px-2 py-1 hover:bg-slate-800">
-                <input id="show-cross-links" type="checkbox" class="accent-sky-500" />
-                Cross-links
-              </label>
             </div>
 
             <input

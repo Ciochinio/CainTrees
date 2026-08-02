@@ -15,8 +15,25 @@ function makeNode(id, depth, parentId) {
     childIds: [], // tree children — nodes whose first discovery was through this one
     linkIds: [], // every video id found in the description
     crossLinks: [], // links to videos already placed elsewhere in the tree
+    links: [], // every link that resolved to a node, regardless of tree shape
+    incoming: [], // every node that links here — the tree only records one of them
     notFollowed: 0, // links left unexpanded because of a depth or node limit
   };
+}
+
+/**
+ * The tree gives each video one parent, chosen by discovery order. The real
+ * relation is many-to-many, so record it separately: `links` and `incoming` hold
+ * every edge, and nothing about them depends on the order videos were found.
+ */
+function linkUp(nodes) {
+  for (const node of nodes.values()) {
+    if (node.isChannel) continue; // its children are clusters, not links
+    node.links = [...node.childIds, ...node.crossLinks].filter((id) => nodes.has(id));
+  }
+  for (const node of nodes.values()) {
+    for (const target of node.links) nodes.get(target).incoming.push(node.id);
+  }
 }
 
 /**
@@ -96,6 +113,7 @@ export async function crawl({
     reason = `Stopped at depth ${maxDepth}.`;
   }
 
+  linkUp(nodes);
   onProgress({ depth: Math.min(depth, maxDepth), total: nodes.size, fetching: 0, done: true });
   return { rootId, nodes, isolatedIds: [], truncated, reason };
 }
@@ -255,6 +273,7 @@ export async function crawlChannel({
   root.isChannel = true;
   root.channel = channel;
   nodes.set(rootId, root);
+  linkUp(nodes);
   for (const id of topLevel) nodes.get(id).parentId = rootId;
 
   // Most uploads link to nothing and are linked by nothing. They carry no

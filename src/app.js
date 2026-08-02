@@ -6,6 +6,7 @@ import { parseChannelInput, parseVideoInput } from './extract.js';
 import { filterList, renderList, setAllExpanded } from './tree-list.js';
 import { renderGraph } from './tree-graph.js';
 import { extractTopics } from './topics.js';
+import { download, loadBundled } from './snapshot.js';
 
 const SETTINGS_KEY = 'ytree:settings';
 const API_KEY_KEY = 'ytree:apikey';
@@ -50,9 +51,9 @@ const ui = {
   fit: $('fit'),
   zoomIn: $('zoom-in'),
   zoomOut: $('zoom-out'),
-  showCrossLinks: $('show-cross-links'),
   search: $('search'),
   crumbs: $('crumbs'),
+  exportSnapshot: $('export-snapshot'),
   topics: $('topics'),
   topicChips: $('topic-chips'),
   topicMore: $('topic-more'),
@@ -67,7 +68,9 @@ let graph = null;
 let graphStale = true;
 let view = 'list';
 let controller = null;
-let focusId = null; // graph drill-down: which node is acting as the root
+// A DAG has no single path back to the root, so breadcrumbs track where you
+// clicked rather than trying to reconstruct a lineage.
+let focusStack = [];
 let topics = [];
 let selectedTopics = new Set();
 let topicsExpanded = false;
@@ -168,45 +171,46 @@ function crumbLabel(node) {
   return title.length > 34 ? `${title.slice(0, 33)}…` : title;
 }
 
-function renderCrumbs(rootId) {
+function renderCrumbs() {
   ui.crumbs.replaceChildren();
   const showing = view === 'graph' && !!tree;
   ui.crumbs.classList.toggle('hidden', !showing);
   ui.crumbs.classList.toggle('flex', showing);
   if (!showing) return;
 
-  const path = [];
-  for (let id = rootId; id; id = tree.nodes.get(id)?.parentId) path.unshift(id);
-
-  path.forEach((id, index) => {
+  const root = tree.nodes.get(tree.rootId);
+  const path = [{ id: null, label: root ? crumbLabel(root) : 'Everything' }];
+  for (const id of focusStack) {
     const node = tree.nodes.get(id);
-    if (!node) return;
-    if (index) ui.crumbs.append(Object.assign(document.createElement('span'), {
-      className: 'text-slate-600',
-      textContent: '›',
-    }));
+    if (node) path.push({ id, label: crumbLabel(node) });
+  }
 
+  path.forEach((entry, index) => {
+    if (index) {
+      const sep = document.createElement('span');
+      sep.className = 'text-slate-600';
+      sep.textContent = '›';
+      ui.crumbs.append(sep);
+    }
     const last = index === path.length - 1;
     const crumb = document.createElement(last ? 'span' : 'button');
-    crumb.textContent = crumbLabel(node);
+    crumb.textContent = entry.label;
     crumb.className = last
       ? 'font-medium text-slate-200'
       : 'rounded px-1 text-slate-400 underline-offset-2 hover:text-sky-300 hover:underline';
     if (!last) {
       crumb.addEventListener('click', () => {
-        focusId = id === tree.rootId ? null : id;
+        focusStack = focusStack.slice(0, index);
         drawGraph();
       });
     }
     ui.crumbs.append(crumb);
   });
 
-  if (path.length > 1) {
-    const hint = document.createElement('span');
-    hint.className = 'ml-2 text-slate-600';
-    hint.textContent = 'click a node to go deeper · ⌘/Ctrl-click opens YouTube';
-    ui.crumbs.append(hint);
-  }
+  const hint = document.createElement('span');
+  hint.className = 'ml-2 text-slate-600';
+  hint.textContent = `${graph?.size ?? 0} shown · click a node to follow its links · ⌘/Ctrl-click opens YouTube`;
+  ui.crumbs.append(hint);
 }
 
 // -------------------------------------------------------------- topics
@@ -283,20 +287,28 @@ function applyFilters() {
   setStatus(`${matches} match${matches === 1 ? '' : 'es'}${scope} · ${bits.join(' + ')}`);
 }
 
+/** Where the graph starts: a focused node, or every cluster in the channel. */
+function graphStart() {
+  if (!tree) return [];
+  const focused = focusStack[focusStack.length - 1];
+  if (focused && tree.nodes.has(focused)) return [focused];
+  const root = tree.nodes.get(tree.rootId);
+  if (!root) return [];
+  return root.isChannel ? root.childIds : [tree.rootId];
+}
+
 function drawGraph() {
   if (!tree) return;
-  const rootId = focusId && tree.nodes.has(focusId) ? focusId : tree.rootId;
   graph = renderGraph(ui.graphPanel, tree, {
-    rootId,
-    showCrossLinks: ui.showCrossLinks.checked,
+    startIds: graphStart(),
     predicate: buildPredicate(),
     onFocus: (id) => {
-      focusId = id;
+      focusStack = [...focusStack, id];
       drawGraph();
     },
   });
   graphStale = false;
-  renderCrumbs(rootId);
+  renderCrumbs();
 }
 
 function setView(next) {
@@ -314,7 +326,7 @@ function setView(next) {
   ui.viewGraph.classList.add(...(listActive ? IDLE_TAB : ACTIVE_TAB));
 
   if (!listActive && tree && graphStale) drawGraph();
-  else renderCrumbs(focusId && tree?.nodes.has(focusId) ? focusId : tree?.rootId);
+  else renderCrumbs();
   if (buildPredicate()) applyFilters();
 }
 
@@ -416,6 +428,26 @@ function channelProgress({ phase, count, of }) {
   return { phase: 'Building the tree…' };
 }
 
+/** Take a freshly built or freshly loaded tree and put it on screen. */
+function adopt(result, summary) {
+  tree = result;
+  graphStale = true;
+  focusStack = [];
+  ui.search.value = '';
+  selectedTopics = new Set();
+  topicsExpanded = false;
+  topics = extractTopics(result);
+  renderTopics();
+
+  ui.empty.classList.add('hidden');
+  renderList(ui.listPanel, tree);
+  if (view === 'graph') drawGraph();
+
+  lastSummary = summary || summarise(result);
+  setStatus(lastSummary);
+  ui.exportSnapshot.classList.remove('hidden');
+}
+
 // ----------------------------------------------------------------- crawl
 
 async function start() {
@@ -464,20 +496,8 @@ async function start() {
               ),
           });
 
-    tree = result;
-    graphStale = true;
-    focusId = null;
-    ui.search.value = '';
-    selectedTopics = new Set();
-    topicsExpanded = false;
-    topics = extractTopics(result);
-    renderTopics();
     setProgress({ phase: 'Rendering…', detail: `${result.nodes.size} nodes` });
-    ui.empty.classList.add('hidden');
-    renderList(ui.listPanel, tree);
-    if (view === 'graph') drawGraph();
-    lastSummary = summarise(result);
-    setStatus(lastSummary);
+    adopt(result);
     if (result.nodes.get(mode.videoId)?.unavailable) {
       showError('The root video came back empty — it may be private, deleted, or region-locked.');
     }
@@ -525,8 +545,6 @@ ui.collapseAll.addEventListener('click', () => setAllExpanded(ui.listPanel, fals
 ui.fit.addEventListener('click', () => graph?.fit());
 ui.zoomIn.addEventListener('click', () => graph?.zoomBy(1.25));
 ui.zoomOut.addEventListener('click', () => graph?.zoomBy(1 / 1.25));
-ui.showCrossLinks.addEventListener('change', drawGraph);
-
 ui.search.addEventListener('input', applyFilters);
 ui.topicMore.addEventListener('click', () => {
   topicsExpanded = !topicsExpanded;
@@ -538,6 +556,10 @@ ui.topicClear.addEventListener('click', () => {
   applyFilters();
 });
 
+ui.exportSnapshot.addEventListener('click', () => {
+  if (tree) download(tree);
+});
+
 loadSettings();
 reflectMode();
 updateCacheInfo();
@@ -545,3 +567,15 @@ setView('list');
 
 // Tells the boot-failure check in index.html that the module got this far.
 window.__ytreeReady = true;
+
+// A committed snapshot means visitors get the whole map with no API key at all;
+// entering a key is only needed to re-crawl for fresher data.
+loadBundled().then((snapshot) => {
+  if (!snapshot || tree) return;
+  const when = snapshot.generatedAt ? new Date(snapshot.generatedAt) : null;
+  const stamp = when && !Number.isNaN(when.valueOf()) ? when.toLocaleDateString() : 'unknown date';
+  const count = snapshot.mode === 'channel' ? snapshot.nodes.size - 1 : snapshot.nodes.size;
+  adopt(snapshot, `${count} videos · from saved snapshot (${stamp})`);
+  ui.modeHint.textContent =
+    'Showing the saved snapshot. Add an API key and press Build tree to re-crawl for fresher data.';
+});
