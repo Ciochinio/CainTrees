@@ -5,6 +5,7 @@
 // count on the section header is the number of rows you get.
 
 import { induce } from './induce.js';
+import { buildNeighbourhood } from './neighbourhood.js';
 import { jumpToVideo, renderPlacement, titleOf } from './tree-list.js';
 import { buildSections, matchingIds } from './sections.js';
 import { renderGraph } from './tree-graph.js';
@@ -41,6 +42,9 @@ export function createView() {
     detailFocus: $('detail-focus'),
     detailClose: $('detail-close'),
     detailLinks: $('detail-links'),
+    neighbourTools: $('neighbour-tools'),
+    depthIn: $('depth-in'),
+    depthOut: $('depth-out'),
   };
 
   let tree = null;
@@ -50,8 +54,14 @@ export function createView() {
   let graphStale = true;
   let view = 'list';
   let graphTopic = null;
-  let focusStack = [];
+  // Where you've walked: the topic you started from, then each video centred on.
+  // Without this there was no way back after following a link.
+  let trail = [];
   let summary = '';
+
+  const centred = () => (trail.length ? trail[trail.length - 1] : null);
+  const depthIn = () => Number(ui.depthIn?.value ?? 1);
+  const depthOut = () => Number(ui.depthOut?.value ?? 1);
 
   const setStatus = (text) => {
     ui.status.textContent = text;
@@ -172,19 +182,26 @@ export function createView() {
   }
 
   /**
-   * Go to a video wherever it lives. If it isn't in the topic on screen, switch
-   * to one that holds it first — that's what makes a reference out of the
-   * current topic actually followable.
+   * Centre the graph on a video: its own links out and in, regardless of which
+   * topic anything belongs to. Following a reference used to dump you into the
+   * destination's topic, which was arbitrary and lost your place.
    */
-  function travelTo(videoId) {
-    const section = sectionFor(graphTopic);
-    if (!section?.ids.has(videoId)) {
-      const host = sections.find((candidate) => candidate.ids.has(videoId));
-      if (host) selectGraphTopic(host.term);
-    }
+  function centreOn(videoId) {
+    if (!tree.nodes.has(videoId)) return;
+    if (centred() !== videoId) trail = [...trail, videoId];
     if (view !== 'graph') setView('graph');
-    graph?.select(videoId);
+    graphStale = true;
+    drawGraph();
     openDetail(videoId);
+  }
+
+  /** Drop back to a point on the trail — index -1 means the topic itself. */
+  function backTo(index) {
+    trail = index < 0 ? [] : trail.slice(0, index + 1);
+    graphStale = true;
+    drawGraph();
+    if (trail.length) openDetail(centred());
+    else closeDetail();
   }
 
   function linkRow(videoId) {
@@ -197,11 +214,10 @@ export function createView() {
     button.append(label);
 
     const host = sections.find((section) => section.ids.has(videoId));
-    const current = sectionFor(graphTopic);
-    if (host && host !== current) {
+    if (host) {
       button.append(el('span', 'shrink-0 rounded bg-slate-700/70 px-1.5 py-0.5 text-[10px] text-slate-300', host.label));
     }
-    button.addEventListener('click', () => travelTo(videoId));
+    button.addEventListener('click', () => centreOn(videoId));
     return button;
   }
 
@@ -253,10 +269,12 @@ export function createView() {
     if (graphTopic === term) return;
     graphTopic = term;
     if (ui.topicSelect) ui.topicSelect.value = term;
-    focusStack = [];
+    trail = [];
     graphStale = true;
     if (view === 'graph') drawGraph();
   }
+
+  const TRAIL_VISIBLE = 4;
 
   function renderCrumbs() {
     ui.crumbs.replaceChildren();
@@ -265,57 +283,77 @@ export function createView() {
     ui.crumbs.classList.toggle('flex', showing);
     if (!showing) return;
 
-    const section = sectionFor(graphTopic);
-    const home = document.createElement(focusStack.length ? 'button' : 'span');
-    home.textContent = section ? section.label : 'All videos';
-    home.className = focusStack.length
-      ? 'rounded px-1 text-slate-400 underline-offset-2 hover:text-sky-300 hover:underline'
-      : 'font-medium text-slate-200';
-    if (focusStack.length) {
-      home.addEventListener('click', () => {
-        focusStack = [];
-        drawGraph();
-      });
+    if (trail.length) {
+      const back = el('button', 'rounded border border-slate-700 px-1.5 py-0.5 text-slate-300 hover:bg-slate-800', '← Back');
+      back.addEventListener('click', () => backTo(trail.length - 2));
+      ui.crumbs.append(back);
     }
+
+    const section = sectionFor(graphTopic);
+    const atTopic = trail.length === 0;
+    const home = document.createElement(atTopic ? 'span' : 'button');
+    home.textContent = section ? section.label : 'All videos';
+    home.className = atTopic
+      ? 'font-medium text-slate-200'
+      : 'rounded px-1 text-slate-400 underline-offset-2 hover:text-sky-300 hover:underline';
+    if (!atTopic) home.addEventListener('click', () => backTo(-1));
     ui.crumbs.append(home);
 
-    focusStack.forEach((placement, index) => {
+    // Only the tail of a long walk is worth showing.
+    const start = Math.max(0, trail.length - TRAIL_VISIBLE);
+    if (start > 0) ui.crumbs.append(el('span', 'text-slate-600', '› …'));
+
+    trail.slice(start).forEach((videoId, offset) => {
+      const index = start + offset;
       ui.crumbs.append(el('span', 'text-slate-600', '›'));
-      const last = index === focusStack.length - 1;
-      const label = titleOf(tree.nodes.get(placement.id));
+      const last = index === trail.length - 1;
+      const label = titleOf(tree.nodes.get(videoId));
       const crumb = document.createElement(last ? 'span' : 'button');
-      crumb.textContent = label.length > 34 ? `${label.slice(0, 33)}…` : label;
+      crumb.textContent = label.length > 28 ? `${label.slice(0, 27)}…` : label;
       crumb.className = last
         ? 'font-medium text-slate-200'
         : 'rounded px-1 text-slate-400 underline-offset-2 hover:text-sky-300 hover:underline';
-      if (!last) {
-        crumb.addEventListener('click', () => {
-          focusStack = focusStack.slice(0, index + 1);
-          drawGraph();
-        });
-      }
+      if (!last) crumb.addEventListener('click', () => backTo(index));
       ui.crumbs.append(crumb);
     });
 
     ui.crumbs.append(
-      el('span', 'ml-2 text-slate-600', `${graph?.size ?? 0} shown · click a node for details`),
+      el(
+        'span',
+        'ml-2 text-slate-600',
+        trail.length
+          ? `${graph?.size ?? 0} shown · click a neighbour to walk on`
+          : `${graph?.size ?? 0} shown · click a node for details`,
+      ),
     );
   }
 
   function drawGraph() {
     if (!tree) return;
-    const section = sectionFor(graphTopic);
-    if (!section) return;
-    const ids = matchingIds(tree, section, predicate());
-    const { roots } = induce(tree, ids);
-    const focused = focusStack[focusStack.length - 1];
+    const centre = centred();
 
-    graph = renderGraph(ui.graphPanel, tree, {
-      roots: focused ? [focused] : roots,
-      onSelect: (placement) => openDetail(placement.id),
-    });
+    if (centre) {
+      const hood = buildNeighbourhood(tree, centre, { inDepth: depthIn(), outDepth: depthOut() });
+      graph = renderGraph(ui.graphPanel, tree, {
+        hood,
+        // Clicking a neighbour walks to it rather than just describing it.
+        onSelect: (placement) => centreOn(placement.id),
+      });
+    } else {
+      const section = sectionFor(graphTopic);
+      if (!section) return;
+      const { roots } = induce(tree, matchingIds(tree, section, predicate()));
+      graph = renderGraph(ui.graphPanel, tree, {
+        roots,
+        onSelect: (placement) => openDetail(placement.id),
+      });
+    }
+
     graphStale = false;
-    if (detailId) graph.select(detailId);
+    if (centre) graph.select(centre);
+    else if (detailId) graph.select(detailId);
+    ui.neighbourTools?.classList.toggle('hidden', !centre);
+    ui.neighbourTools?.classList.toggle('flex', !!centre);
     renderCrumbs();
   }
 
@@ -367,7 +405,7 @@ export function createView() {
     visible = sections;
     graphTopic = sections[0]?.term || null;
     graphStale = true;
-    focusStack = [];
+    trail = [];
     ui.search.value = '';
     closeDetail();
 
@@ -402,12 +440,14 @@ export function createView() {
   ui.topicSelect?.addEventListener('change', () => selectGraphTopic(ui.topicSelect.value));
   ui.detailClose.addEventListener('click', closeDetail);
   ui.detailFocus.addEventListener('click', () => {
-    if (!detailId) return;
-    const section = sectionFor(graphTopic);
-    const { placed } = induce(tree, matchingIds(tree, section, predicate()));
-    const placement = placed.get(detailId);
-    if (!placement) return;
-    focusStack = [...focusStack, placement];
+    if (detailId) centreOn(detailId);
+  });
+  ui.depthIn?.addEventListener('change', () => {
+    graphStale = true;
+    drawGraph();
+  });
+  ui.depthOut?.addEventListener('change', () => {
+    graphStale = true;
     drawGraph();
   });
 

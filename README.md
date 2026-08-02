@@ -101,10 +101,23 @@ it usable:
 - **Topics are the top level** — see below. Everything starts collapsed.
 - **A topic never renders more videos than its header promises.**
 - **Click a node for its detail panel** — a real `<a>` to watch it on YouTube,
-  everything it links to, and everything that links to it. Each entry is
-  clickable: following one that lives in another topic switches topic, redraws,
-  and selects it, so a reference is never a dead end. **Focus** drills into the
-  node's subtree, and breadcrumbs walk back up.
+  everything it links to, and everything that links to it, each tagged with the
+  topic it belongs to.
+
+### Walking the links
+
+Following a reference used to drop you into the *destination's* topic, which was
+arbitrary — often a 4-video topic you'd never heard of — and the breadcrumb reset,
+so there was no way back. Clicking a link now **centres the graph on that video**
+instead: `src/neighbourhood.js` collects what links to it on the left and what it
+links to on the right, ignoring topics entirely. Clicking any neighbour walks on
+from there.
+
+- **How far out is yours to set** — `linked from` and `links to` selectors in the
+  graph toolbar, each `none` / `1 step` / `2 steps`.
+- **The breadcrumb is now a trail**: `lore › Fun vs. Realism › Encumbrance`.
+  Every step is clickable, there's a **← Back** button, and the topic you started
+  from is always the first entry, so one click returns you to it.
 
 ### Browsing by topic
 

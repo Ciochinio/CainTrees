@@ -63,17 +63,43 @@ function layout(roots) {
 }
 
 function edgePath(from, to) {
-  const x1 = from.x + NODE_W;
+  // Edges can run either way in the neighbourhood view, so pick the sides.
+  const rightwards = to.x >= from.x;
+  const x1 = rightwards ? from.x + NODE_W : from.x;
   const y1 = from.y + NODE_H / 2;
-  const x2 = to.x;
+  const x2 = rightwards ? to.x : to.x + NODE_W;
   const y2 = to.y + NODE_H / 2;
-  const bend = Math.max(30, (x2 - x1) / 2);
+  const bend = Math.max(30, Math.abs(x2 - x1) / 2) * (rightwards ? 1 : -1);
   return svg('path', {
     d: `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`,
     fill: 'none',
     stroke: '#334155',
     'stroke-width': 1.5,
+    'marker-end': 'url(#arrow)',
   });
+}
+
+/** Columns left-to-right by signed distance, each stack vertically centred. */
+function layoutNeighbourhood(hood) {
+  const indices = [...hood.columns.keys()].sort((a, b) => a - b);
+  const tallest = Math.max(...indices.map((i) => hood.columns.get(i).length));
+  const pos = new Map();
+
+  indices.forEach((index, order) => {
+    const ids = hood.columns.get(index);
+    const offset = ((tallest - ids.length) * ROW) / 2;
+    ids.forEach((id, row) => {
+      pos.set(id, { x: order * COLUMN, y: offset + row * ROW });
+    });
+  });
+
+  let width = 0;
+  let height = 0;
+  for (const { x, y } of pos.values()) {
+    width = Math.max(width, x + NODE_W);
+    height = Math.max(height, y + NODE_H);
+  }
+  return { pos, width, height };
 }
 
 function nodeGroup(placement, node, at, onSelect) {
@@ -83,6 +109,7 @@ function nodeGroup(placement, node, at, onSelect) {
   let stroke = DEPTH_STROKE[Math.min(placement.depth - 1, DEPTH_STROKE.length - 1)];
   if (node?.unavailable) stroke = '#7f1d1d';
   else if (node?.offChannel) stroke = '#475569';
+  if (placement.isCentre) stroke = '#e2e8f0';
 
   const hub = placement.extraParents.length > 0;
   group.append(
@@ -90,9 +117,9 @@ function nodeGroup(placement, node, at, onSelect) {
       width: NODE_W,
       height: NODE_H,
       rx: 10,
-      fill: '#0f172a',
+      fill: placement.isCentre ? '#1e293b' : '#0f172a',
       stroke,
-      'stroke-width': hub ? 2 : 1,
+      'stroke-width': placement.isCentre || hub ? 2 : 1,
       ...(node?.offChannel ? { 'stroke-dasharray': '5 3' } : {}),
     }),
   );
@@ -109,10 +136,16 @@ function nodeGroup(placement, node, at, onSelect) {
 
   const bits = [];
   if (node?.offChannel) bits.push('off-channel');
-  if (hub) bits.push(`+${placement.extraParents.length} link here`);
-  else if (node?.video?.channelTitle) bits.push(clip(node.video.channelTitle, 20));
-  if (placement.children.length) bits.push(`${placement.children.length} linked`);
-  if (placement.offTopic?.length) bits.push(`${placement.offTopic.length} outside`);
+  if (placement.incomingCount != null) {
+    // Neighbourhood view: say how connected each video is, both directions.
+    if (placement.incomingCount) bits.push(`${placement.incomingCount} in`);
+    if (placement.outgoingCount) bits.push(`${placement.outgoingCount} out`);
+  } else {
+    if (hub) bits.push(`+${placement.extraParents.length} link here`);
+    else if (node?.video?.channelTitle) bits.push(clip(node.video.channelTitle, 20));
+    if (placement.children.length) bits.push(`${placement.children.length} linked`);
+    if (placement.offTopic?.length) bits.push(`${placement.offTopic.length} outside`);
+  }
 
   const sub = svg('text', { x: 12, y: 40, fill: hub ? '#c4b5fd' : '#94a3b8', 'font-size': 11 });
   sub.textContent = bits.join('  ·  ');
@@ -127,35 +160,78 @@ function nodeGroup(placement, node, at, onSelect) {
 }
 
 export function renderGraph(container, tree, options = {}) {
-  const { roots = [], onSelect = () => {}, predicate = null } = options;
+  const { roots = [], hood = null, onSelect = () => {}, predicate = null } = options;
 
   container.replaceChildren();
   container.__fitObserver?.disconnect();
   container.__fitObserver = null;
-  if (!roots.length) return { fit() {}, zoomBy() {}, highlight: () => 0, size: 0 };
+  if (!roots.length && !hood) {
+    return { fit() {}, zoomBy() {}, highlight: () => 0, select: () => false, size: 0 };
+  }
 
-  const { pos, width, height } = layout(roots);
+  const { pos, width, height } = hood ? layoutNeighbourhood(hood) : layout(roots);
 
   const root = svg('svg', { width: '100%', height: '100%', class: 'block touch-none select-none' });
+  const defs = svg('defs');
+  const marker = svg('marker', {
+    id: 'arrow',
+    viewBox: '0 0 8 8',
+    refX: 7,
+    refY: 4,
+    markerWidth: 5,
+    markerHeight: 5,
+    orient: 'auto-start-reverse',
+  });
+  marker.append(svg('path', { d: 'M 0 1 L 7 4 L 0 7 z', fill: '#475569' }));
+  defs.append(marker);
+
   const camera = svg('g');
   const edges = svg('g');
   const nodes = svg('g');
   camera.append(edges, nodes);
-  root.append(camera);
+  root.append(defs, camera);
 
   let drawn = 0;
-  const visit = (placement) => {
-    const from = pos.get(placement.id);
-    if (!from) return;
-    for (const child of placement.children) {
-      const to = pos.get(child.id);
-      if (to) edges.append(edgePath(from, to));
-      visit(child);
+  if (hood) {
+    for (const [fromId, toId] of hood.edges) {
+      const from = pos.get(fromId);
+      const to = pos.get(toId);
+      if (from && to) edges.append(edgePath(from, to));
     }
-    nodes.append(nodeGroup(placement, tree.nodes.get(placement.id), from, onSelect));
-    drawn++;
-  };
-  roots.forEach(visit);
+    for (const [id, at] of pos) {
+      nodes.append(
+        nodeGroup(
+          {
+            id,
+            depth: Math.abs(hood.column.get(id)) + 1,
+            children: [],
+            extraParents: [],
+            offTopic: [],
+            isCentre: id === hood.centreId,
+            incomingCount: (tree.nodes.get(id)?.incoming || []).length,
+            outgoingCount: (tree.nodes.get(id)?.links || []).length,
+          },
+          tree.nodes.get(id),
+          at,
+          onSelect,
+        ),
+      );
+      drawn++;
+    }
+  } else {
+    const visit = (placement) => {
+      const from = pos.get(placement.id);
+      if (!from) return;
+      for (const child of placement.children) {
+        const to = pos.get(child.id);
+        if (to) edges.append(edgePath(from, to));
+        visit(child);
+      }
+      nodes.append(nodeGroup(placement, tree.nodes.get(placement.id), from, onSelect));
+      drawn++;
+    };
+    roots.forEach(visit);
+  }
 
   container.append(root);
 

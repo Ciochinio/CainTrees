@@ -74,6 +74,20 @@
             <button id="zoom-in" class="rounded border border-slate-700 px-2 py-1 hover:bg-slate-800" aria-label="Zoom in">
               +
             </button>
+            <span id="neighbour-tools" class="hidden items-center gap-1.5">
+              <span class="text-slate-500">linked from</span>
+              <select id="depth-in" class="rounded border border-slate-700 bg-slate-900 px-1.5 py-1 text-xs focus:border-sky-500 focus:outline-none" aria-label="How far back to show">
+                <option value="0">none</option>
+                <option value="1" selected>1 step</option>
+                <option value="2">2 steps</option>
+              </select>
+              <span class="text-slate-500">links to</span>
+              <select id="depth-out" class="rounded border border-slate-700 bg-slate-900 px-1.5 py-1 text-xs focus:border-sky-500 focus:outline-none" aria-label="How far forward to show">
+                <option value="0">none</option>
+                <option value="1" selected>1 step</option>
+                <option value="2">2 steps</option>
+              </select>
+            </span>
           </div>
           <input
             id="search"
@@ -110,7 +124,7 @@
                 Watch on YouTube ↗
               </a>
               <button id="detail-focus" class="rounded-md border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800">
-                Focus
+                Centre on this
               </button>
             </div>
             <div id="detail-links" class="mt-4 space-y-4"></div>
