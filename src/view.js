@@ -251,18 +251,49 @@ export function createView() {
 
   // --------------------------------------------------------------- graph
 
-  const sectionFor = (term) => sections.find((section) => section.term === term) || sections[0] || null;
+  // An empty term means "no topic picked" — the graph is then driven by the
+  // search box instead, so you can find a video without knowing its topic.
+  const sectionFor = (term) => (term ? sections.find((section) => section.term === term) : null);
+
+  const HUB_COUNT = 20;
 
   function fillTopicSelect() {
     if (!ui.topicSelect) return;
     ui.topicSelect.replaceChildren();
+    const any = document.createElement('option');
+    any.value = '';
+    any.textContent = 'Any topic';
+    ui.topicSelect.append(any);
     for (const section of sections) {
       const option = document.createElement('option');
       option.value = section.term;
       option.textContent = `${section.label} (${section.videos})`;
       ui.topicSelect.append(option);
     }
-    if (graphTopic) ui.topicSelect.value = graphTopic;
+    ui.topicSelect.value = graphTopic || '';
+  }
+
+  /** Which videos the graph draws when it isn't centred on one. */
+  function graphIds() {
+    const test = predicate();
+    const section = sectionFor(graphTopic);
+    if (section) return matchingIds(tree, section, test);
+
+    const videos = [];
+    for (const node of tree.nodes.values()) {
+      if (node.isChannel || !node.video) continue;
+      if (!test || test(node)) videos.push(node);
+    }
+    if (test) return new Set(videos.map((node) => node.id));
+
+    // Nothing picked and nothing typed: open on the busiest videos, which are
+    // at least a useful place to start walking from.
+    return new Set(
+      videos
+        .sort((a, b) => b.incoming.length + b.links.length - (a.incoming.length + a.links.length))
+        .slice(0, HUB_COUNT)
+        .map((node) => node.id),
+    );
   }
 
   function selectGraphTopic(term) {
@@ -291,8 +322,13 @@ export function createView() {
 
     const section = sectionFor(graphTopic);
     const atTopic = trail.length === 0;
+    const query = ui.search.value.trim();
     const home = document.createElement(atTopic ? 'span' : 'button');
-    home.textContent = section ? section.label : 'All videos';
+    home.textContent = section
+      ? section.label
+      : query
+        ? `matches for “${query}”`
+        : 'Most linked';
     home.className = atTopic
       ? 'font-medium text-slate-200'
       : 'rounded px-1 text-slate-400 underline-offset-2 hover:text-sky-300 hover:underline';
@@ -340,9 +376,7 @@ export function createView() {
         onSelect: (placement) => centreOn(placement.id),
       });
     } else {
-      const section = sectionFor(graphTopic);
-      if (!section) return;
-      const { roots } = induce(tree, matchingIds(tree, section, predicate()));
+      const { roots } = induce(tree, graphIds());
       graph = renderGraph(ui.graphPanel, tree, {
         roots,
         onSelect: (placement) => openDetail(placement.id),
@@ -403,7 +437,7 @@ export function createView() {
     tree = next;
     sections = buildSections(tree, extractTopics(tree));
     visible = sections;
-    graphTopic = sections[0]?.term || null;
+    graphTopic = ''; // start unfiltered so search can reach the whole channel
     graphStale = true;
     trail = [];
     ui.search.value = '';

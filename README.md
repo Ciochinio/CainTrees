@@ -104,6 +104,16 @@ it usable:
   everything it links to, and everything that links to it, each tagged with the
   topic it belongs to.
 
+### Finding a video
+
+The topic selector is a filter, not a requirement — it starts on **Any topic**,
+so the search box reaches the whole channel and you don't need to know which
+topic a video lives in to find it. With nothing picked and nothing typed the
+graph opens on the 20 best-connected videos, as somewhere to start walking from;
+type a title and it draws the matches instead, wherever they live.
+
+Picking a topic narrows both the drawing and the search to that topic.
+
 ### Walking the links
 
 Following a reference used to drop you into the *destination's* topic, which was
