@@ -128,8 +128,12 @@ instead: `src/neighbourhood.js` collects what links to it on the left and what i
 links to on the right, ignoring topics entirely. Clicking any neighbour walks on
 from there.
 
+- **Clicking never travels.** A left click always just shows the video, in every
+  view. Moving the graph is only ever the explicit **Centre on this** button, so
+  you can inspect a node without losing your place.
 - **How far out is yours to set** — `linked from` and `links to` selectors in the
   graph toolbar, each `none` / `1 step` / `2 steps`.
+- Re-picking the topic you're already on leaves the walk and returns to it.
 - **The breadcrumb is now a trail**: `lore › Fun vs. Realism › Encumbrance`.
   Every step is clickable, there's a **← Back** button, and the topic you started
   from is always the first entry, so one click returns you to it.

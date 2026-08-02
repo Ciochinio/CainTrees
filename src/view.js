@@ -302,7 +302,9 @@ export function createView() {
   }
 
   function selectGraphTopic(term) {
-    if (graphTopic === term) return;
+    // Re-picking the topic you're already on is how you get back out of a walk,
+    // so only bail when there's genuinely nothing to change.
+    if (graphTopic === term && !trail.length) return;
     graphTopic = term;
     if (ui.topicSelect) ui.topicSelect.value = term;
     trail = [];
@@ -362,9 +364,7 @@ export function createView() {
       el(
         'span',
         'ml-2 text-slate-600',
-        trail.length
-          ? `${graph?.size ?? 0} shown · click a neighbour to walk on`
-          : `${graph?.size ?? 0} shown · click a node for details`,
+        `${graph?.size ?? 0} shown · click a node for details · middle-click to watch`,
       ),
     );
   }
@@ -377,8 +377,9 @@ export function createView() {
       const hood = buildNeighbourhood(tree, centre, { inDepth: depthIn(), outDepth: depthOut() });
       graph = renderGraph(ui.graphPanel, tree, {
         hood,
-        // Clicking a neighbour walks to it rather than just describing it.
-        onSelect: (placement) => centreOn(placement.id),
+        // Same gesture as everywhere else: show the video. Travelling is always
+        // the explicit "Centre on this" button, never a side effect of a click.
+        onSelect: (placement) => openDetail(placement.id),
       });
     } else {
       const { roots } = induce(tree, graphIds());
